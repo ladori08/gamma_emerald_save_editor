@@ -22,6 +22,23 @@ try {
         --paths src packaging\gui_launcher.py
     & $python -m PyInstaller --noconfirm --clean --onefile --console --name gamma-save `
         --paths src packaging\cli_launcher.py
+    $runtimeKey = $env:GAMMA_EMERALD_SAVE_KEY_HEX
+    if ($runtimeKey) {
+        $runtimeKey = ($runtimeKey -replace '\s', '')
+        if ($runtimeKey -notmatch '^[0-9a-fA-F]{64}$') {
+            throw "GAMMA_EMERALD_SAVE_KEY_HEX must contain exactly 64 hexadecimal characters."
+        }
+        [IO.File]::WriteAllText(
+            (Join-Path $projectRoot "dist\GammaEmeraldSaveEditor\save_key.hex"),
+            $runtimeKey,
+            [Text.Encoding]::ASCII
+        )
+        [IO.File]::WriteAllText(
+            (Join-Path $projectRoot "dist\save_key.hex"),
+            $runtimeKey,
+            [Text.Encoding]::ASCII
+        )
+    }
 } finally {
     Pop-Location
 }

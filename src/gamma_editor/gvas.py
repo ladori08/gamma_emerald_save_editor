@@ -334,7 +334,7 @@ def _decode_extended_value(type_spec: PropertyTypeName, raw: bytes):
             reader = _Reader(raw)
             value = reader.fstring(limit=4096)
             if reader.remaining() == 0:
-                return value, False
+                return value, True
         except (GvasError, UnicodeError):
             pass
     return None, False
@@ -653,8 +653,71 @@ def patch_scalar(document: GvasDocument, property_name: str, value: object) -> b
             raise GvasError("Scalar encoded size changed unexpectedly.")
         data[prop.value_offset : prop.end_offset] = encoded
         return bytes(data)
-    if prop.type_name in {"StrProperty", "NameProperty", "ObjectProperty"}:
+    if prop.type_name in {"StrProperty", "NameProperty", "ObjectProperty", "EnumProperty"}:
         if not isinstance(value, str):
             raise GvasError("String properties require a string value.")
         return _replace_property_payload(document, prop, _encode_fstring(value))
     raise GvasError(f"Unsupported editable property type {prop.type_name}.")
+
+
+def _property_at(document: GvasDocument, path: str, expected_type: str) -> PropertyRecord:
+    matches = [item for item in document.properties if item.path == path]
+    if len(matches) != 1:
+        raise GvasError(f"Expected one property at {path!r}, found {len(matches)}.")
+    prop = matches[0]
+    if prop.type_name != expected_type:
+        raise GvasError(f"Property {path!r} is {prop.type_name}, expected {expected_type}.")
+    return prop
+
+
+def patch_soft_object(
+    document: GvasDocument,
+    path: str,
+    asset_path: str,
+    object_name: str,
+) -> bytes:
+    """Replace a verified UE5 FSoftObjectPtr payload while preserving any sub-path."""
+    prop = _property_at(document, path, "SoftObjectProperty")
+    reader = _Reader(document.raw[prop.value_offset : prop.end_offset])
+    try:
+        _old_asset_path = reader.fstring(limit=65536)
+        _old_object_name = reader.fstring(limit=65536)
+        trailing: list[str] = []
+        while reader.remaining():
+            trailing.append(reader.fstring(limit=65536))
+    except (GvasError, UnicodeError) as exc:
+        raise GvasError(f"Soft object at {path!r} has an unverified payload.") from exc
+    encoded = _encode_fstring(asset_path) + _encode_fstring(object_name)
+    encoded += b"".join(_encode_fstring(item) for item in trailing)
+    return _replace_property_payload(document, prop, encoded)
+
+
+def patch_int_array(document: GvasDocument, path: str, values: list[int] | tuple[int, ...]) -> bytes:
+    prop = _property_at(document, path, "ArrayProperty")
+    if "IntProperty" not in prop.type_descriptor:
+        raise GvasError(f"Array at {path!r} is not an integer array.")
+    if len(values) > 100_000:
+        raise GvasError("Integer array exceeds the safety limit.")
+    try:
+        encoded = struct.pack("<I", len(values)) + b"".join(struct.pack("<i", int(item)) for item in values)
+    except (struct.error, TypeError, ValueError) as exc:
+        raise GvasError("Integer array contains an invalid value.") from exc
+    return _replace_property_payload(document, prop, encoded)
+
+
+def patch_soft_object_array(
+    document: GvasDocument,
+    path: str,
+    values: list[tuple[str, str]] | tuple[tuple[str, str], ...],
+) -> bytes:
+    prop = _property_at(document, path, "ArrayProperty")
+    if "SoftObjectProperty" not in prop.type_descriptor:
+        raise GvasError(f"Array at {path!r} is not a soft-object array.")
+    if len(values) > 1024:
+        raise GvasError("Soft-object array exceeds the safety limit.")
+    encoded = bytearray(struct.pack("<I", len(values)))
+    for asset_path, object_name in values:
+        encoded.extend(_encode_fstring(asset_path))
+        encoded.extend(_encode_fstring(object_name))
+        encoded.extend(_encode_fstring(""))
+    return _replace_property_payload(document, prop, bytes(encoded))

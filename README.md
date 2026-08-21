@@ -50,6 +50,17 @@ gamma-save slot-filename PokemonSaveSlot
 
 `pack` never overwrites an existing file. The GUI is the supported route for guarded live writes.
 
+## Editor workspace
+
+Version 0.3 uses an Indigo-style consumer workspace instead of exposing only raw schema rows:
+
+- Trainer form with synchronized Trainer name/ID edits.
+- Party and 14-box Storage navigation with grouped Main, Stats, Moves, Met and OT/Misc forms.
+- Verified GE-1.0.0 catalogs containing 118 Species DataAssets and 99 Move Blueprints.
+- Pokémon preview cards, HP bar, IV/EV helpers, four move/PP rows and staged-change workflow.
+- Bag editor for existing item names and quantities, searchable raw properties, backup restore,
+  Pokédex/Progress browser and a legality report covering every verified numeric relationship.
+
 ## Editing status
 
 - Complete and tested on real `PokemonSaveSlot`, `QuestSlot`, `GEBerrySlot`, and `GEOptions`
@@ -60,8 +71,10 @@ gamma-save slot-filename PokemonSaveSlot
 - Verified writes: numeric/float/bool fields, variable-length Trainer/Pokemon/item strings with
   parent-size propagation, synchronized trainer name/ID, and domain checks for Level, IV, EV total,
   Friendship, Ability Slot, HP/EXP and Bag quantity.
-- Read-only until catalog/serializer work is complete: changing species/moves/enum assets, adding or
-  removing Pokemon/items, resizing Dex sets, and editing Quest flag arrays.
+- Verified staged serializers now cover Species DataAssets, Nature/Gender/status/met enums, up to
+  four Move Blueprint paths, Current/Max PP arrays, and the existing scalar/string fields.
+- Read-only until struct insertion/removal is game-verified: adding/removing Pokémon or Bag rows,
+  resizing Dex sets, and editing Quest flag arrays.
 
 No user save, decrypted payload, encryption key, or backup is committed to source control.
 

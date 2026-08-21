@@ -102,3 +102,28 @@ The real fixture passed container integrity and semantic encode/decode round-tri
 - Published a sanitized one-commit snapshot to remote branch `feat/story-save-schema` as `47eaa3a`.
   Its parent is the safe `.gitignore` initialization commit, so no earlier local key-bearing commit
   exists in public remote history. Opened draft PR `#1` against `main`.
+
+## 2026-08-22 — Indigo-style consumer editor
+
+- Audited the old Indigo editor workflow and mapped it to the fields actually present in Gamma's
+  UE5.6 story save.
+- Replaced the generic-first GUI with a save-editor workspace: Trainer, six Party slots, 14 storage
+  boxes, Bag, Pokédex/Progress, Legality Check and Advanced tabs.
+- Added grouped Pokemon forms for species, nickname, level/EXP/HP, nature/gender/ability, IVs, EVs,
+  four moves and PP, friendship, held item, status, met data and OT identifiers.
+- Derived tool-only manifests of 118 species and 99 move object paths from the local encrypted PAK.
+  No PAK, sprite, game binary, save, backup, fixture or cryptographic key was copied into source.
+- Added verified EnumProperty, SoftObjectProperty, integer-array and soft-object-array patching while
+  preserving all unknown bytes and enclosing size fields.
+- Added legality checks for catalog membership, levels, IV/EV bounds and totals, HP/friendship,
+  PP alignment, duplicate Pokemon IDs and Bag quantities.
+- Real-save in-memory verification changed Mudkip to Marshtomp, nature to Adamant, and expanded its
+  move/PP arrays; encrypt/decrypt/reparse retained all 22,479 records. The live file was not written.
+- A programmatic GUI interaction changed Party level in staged memory and confirmed the live-save
+  hash remained unchanged. The real save currently produces zero legality findings.
+- Automated tests increased to 23 passing tests. Packaged GUI and CLI passed smoke/integrity tests
+  against the real story save, again with an unchanged live-save hash.
+- Built local release `GammaEmeraldSaveEditor-0.3.0-windows.zip` (tool binaries only; no game).
+  GUI SHA-256: `660F08218BC2C1C1F9F7AAFD45D23D072535FCFC6FC4E6B94C35DBE19636BEC8`.
+  CLI SHA-256: `B771933BF0A1B8A231ABF9F95B023FC0C5249F184AF0DBCFB5645CC528593EF0`.
+  ZIP SHA-256: `4AA0A5FD099BDFCE86A5677CA5ABDFFAF6ECA8052D1954A5D2A67431BAB9499F`.

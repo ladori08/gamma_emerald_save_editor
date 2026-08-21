@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from gamma_editor.domain import validate_domain_value
+from gamma_editor.domain import legality_issues, validate_domain_value
 from gamma_editor.errors import GvasError
 from gamma_editor.gvas import GvasDocument, PropertyRecord
 
@@ -56,3 +56,21 @@ def test_item_quantity_range() -> None:
     with pytest.raises(GvasError, match="quantity"):
         validate_domain_value(document, prop, 10000)
 
+
+def test_verified_enum_catalog() -> None:
+    prop = _prop("Party[0].Nature", 0)
+    prop.type_name = "EnumProperty"
+    document = GvasDocument(raw=b"", header=None, properties=[prop])  # type: ignore[arg-type]
+    validate_domain_value(document, prop, "ENature::Adamant")
+    with pytest.raises(GvasError, match="enum catalog"):
+        validate_domain_value(document, prop, "ENature::DefinitelyNotReal")
+
+
+def test_legality_report_flags_invalid_level() -> None:
+    species = _prop("Party[0].SpeciesData", 0)
+    species.type_name = "SoftObjectProperty"
+    species.value = "/Game/BPS/PokemonData/Pokemon/Water/DA_Mudkip (DA_Mudkip)"
+    level = _prop("Party[0].Level", 101)
+    document = GvasDocument(raw=b"", header=None, properties=[species, level])  # type: ignore[arg-type]
+    issues = legality_issues(document)
+    assert any("Level 101" in issue.message for issue in issues)

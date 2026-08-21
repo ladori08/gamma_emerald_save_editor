@@ -1,6 +1,6 @@
 # Current State
 
-Last updated: 2026-08-21
+Last updated: 2026-08-22
 
 ## Snapshot
 
@@ -10,21 +10,25 @@ Last updated: 2026-08-21
 - Available live slots: `PokemonSaveSlot`, `QuestSlot`, `GEBerrySlot`, and `GEOptions`.
 - `GES1` container reverse engineered and read-only round-trip verified against the real options save.
 - Inner save identified as UE5.6 `GVAS`, class `/Script/PokemonEmerald.GE_SettingsSave`.
-- GUI, CLI, guarded write/backup service, diagnostics and tagged-scalar editor implemented.
+- GUI, CLI, guarded write/backup service, diagnostics and schema-aware editor implemented.
 - Story GVAS recursively parses more than 22,000 tagged records with no parser error, including
   Party, 14 boxes, Daycare, Bag, Seen/Caught and progress fields.
-- GUI domain tabs now expose Trainer, Party, Storage, Bag and Progress. Verified scalar/bool/string
-  writes include domain legality checks and automatic Trainer name/ID synchronization.
-- Automated suite passes: 19 tests plus real-story in-memory edit/encrypt/decrypt verification.
-- Packaged GUI smoke test passes from `dist\GammaEmeraldSaveEditor`; packaged CLI validates the
-  real options save.
+- The v0.3 consumer GUI now follows the Indigo workflow: save toolbar, six Party slots, 14 storage
+  boxes, grouped Pokemon forms, Bag editor, Dex/Progress browser, legality report and Advanced
+  diagnostics/backups.
+- Bundled tool-only catalogs contain 118 Gamma species paths and 99 move paths. Species, nature,
+  gender, status, met type, moves and PP are selected from validated controls; no game asset is
+  copied into the repository or release.
+- Automated suite passes: 23 tests plus real-story in-memory species/nature/moves/PP
+  edit/encrypt/decrypt verification.
+- Packaged v0.3 GUI and CLI both pass against the real story save without modifying it.
 - Local git repository initialized on `main`; initial implementation commit is `39bbe27`.
 - GitHub repository `ladori08/gamma_emerald_save_editor` exists and admin/push access is verified.
   The user explicitly approved publishing it as a public repository on 2026-08-21.
 - The public source no longer embeds the recovered live save-encryption key. Runtime key loading is
   external via `GAMMA_EMERALD_SAVE_KEY_HEX` or ignored `save_key.hex`; a literal scan is clean.
   Live saves, backups and private fixtures remain excluded.
-- Sanitized source is published on remote branch `feat/story-save-schema` at `47eaa3a`; draft PR
+- Sanitized source is published on remote branch `feat/story-save-schema`; draft PR
   `#1` targets `main`. The public remote history has never referenced the embedded-key local history.
 - Story-schema implementation is committed locally on `feat/story-save-schema` as `bf3f172`;
   `origin` points to the new GitHub repository.
@@ -40,10 +44,11 @@ Last updated: 2026-08-21
 
 ## Current limitation
 
-Species/move/enum asset replacement, adding/removing array elements, Dex set resizing, Quest flag
-resizing, money/coins/badges fields absent from the current young save, and a live game reload test
-remain pending. Unsupported fields stay read-only.
+Adding/removing Pokemon or Bag array elements, Dex/Quest set resizing, fields absent from the young
+save, and a controlled live game reload for species/move replacement remain pending. Indigo's
+team-builder, damage calculator and custom-item creation are not yet Gamma-verified workflows.
+Unsupported or structurally variable fields stay read-only.
 
 ## Next verified milestone
 
-Review/merge draft PR `#1`, then tag the first verified release when release scope is confirmed.
+Review/merge draft PR `#1`, then live-test one species/move edit before tagging a public release.

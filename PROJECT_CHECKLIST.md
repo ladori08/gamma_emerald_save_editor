@@ -15,12 +15,14 @@
 | Safety | Atomic and verified write | Done | Service implementation |
 | Recovery | Validated backup restore | Done | Service implementation |
 | UX | GUI overview/properties/backups/diagnostics | Done | Packaged smoke test exit 0 |
+| UX | Indigo-style Trainer/Party/Storage/Bag/Dex/Legality workspace | Done | Real-save GUI interaction + packaged smoke test |
 | CLI | list/summary/validate/unpack/pack/name | Done | Real options save |
 | Trainer | Identity/time/location + synchronized name/ID | Partial | Real story save + in-memory write |
-| Party | Pokemon/stats/IV/EV/HP/friendship | Partial | 1 live Party record; validated writes |
+| Party | Pokemon/stats/IV/EV/HP/friendship | Done | Real Party record + validated writes |
+| Party | Species/nature/moves/PP catalogs and writes | Partial | Real-save in-memory round-trip; live reload pending |
 | Storage | 14 boxes × 30 Pokemon records | Done | 420 slots parsed |
 | Bag | Categories/items/existing quantities | Partial | Live Potion 2 -> 3 write + reload passed |
 | Progress | Dex/flags/daycare/world state | Partial | Story + Quest decoded read-only |
-| Build | Windows executable | Done | GUI and CLI artifacts in `dist` |
+| Build | Windows executable | Done | v0.3.0 GUI/CLI/release ZIP smoke-tested |
 | Backup | Separate GitHub repository | Done | Sanitized branch + draft PR #1 published |
 | Live test | Edit, game load and in-game resave | Done | Potion 2 -> 3 survived normal game resave |

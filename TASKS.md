@@ -28,12 +28,17 @@ Status legend: `[x]` verified, `[~]` implemented/awaiting final verification, `[
 - [~] Map species, level/EXP, nature, ability, IV, EV, moves/PP, item and friendship constraints.
 - [~] Map Bag pockets, item identifiers and quantities (existing quantities editable).
 - [~] Map Seen/Caught Dex and progress/event flags (decoded/read-only arrays).
-- [~] Add legality rules and cross-field consistency repair (core numeric rules + trainer sync done).
+- [x] Add Indigo-style Party/Storage navigation and grouped Pokemon editor forms.
+- [x] Catalog the game's 118 species and 99 move object paths without copying game assets.
+- [x] Add legality report and cross-field consistency repair for verified numeric/catalog rules.
+- [ ] Verify adding/removing Pokemon and Bag entries before enabling variable-size structure writes.
+- [ ] Add Gamma-verified team-builder, damage-calculator and custom-item workflows.
 
 ## Verification and delivery
 
 - [x] Complete automated unit tests and real-options-save read-only test.
 - [x] Verify story-save edit -> game load -> resave cycle.
 - [x] Build Windows executable and smoke-test it.
+- [x] Package and smoke-test the tool-only v0.3.0 local release against the real story save.
 - [x] Publish a sanitized clean history with external key provisioning and draft PR.
 - [ ] Tag the first verified release.
