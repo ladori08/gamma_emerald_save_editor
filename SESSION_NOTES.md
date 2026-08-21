@@ -19,6 +19,8 @@ Last updated: 2026-08-21
 8. Public source uses external key provisioning via `GAMMA_EMERALD_SAVE_KEY_HEX` or ignored
    `save_key.hex`; the real key is not tracked. Never publish live saves, backups, keys or private
    fixtures. The current tracked-file literal scan is clean.
+9. Sanitized remote snapshot `47eaa3a` is on `feat/story-save-schema`; draft PR `#1` targets `main`.
+   Remote public history contains only the safe initialization and sanitized feature snapshot.
 
 ## Known identifiers
 

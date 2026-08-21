@@ -24,6 +24,8 @@ Last updated: 2026-08-21
 - The public source no longer embeds the recovered live save-encryption key. Runtime key loading is
   external via `GAMMA_EMERALD_SAVE_KEY_HEX` or ignored `save_key.hex`; a literal scan is clean.
   Live saves, backups and private fixtures remain excluded.
+- Sanitized source is published on remote branch `feat/story-save-schema` at `47eaa3a`; draft PR
+  `#1` targets `main`. The public remote history has never referenced the embedded-key local history.
 - Story-schema implementation is committed locally on `feat/story-save-schema` as `bf3f172`;
   `origin` points to the new GitHub repository.
 
@@ -44,5 +46,4 @@ remain pending. Unsupported fields stay read-only.
 
 ## Next verified milestone
 
-Publish the explicitly approved public source branches and draft PR, then tag the first verified
-release when release scope is confirmed.
+Review/merge draft PR `#1`, then tag the first verified release when release scope is confirmed.

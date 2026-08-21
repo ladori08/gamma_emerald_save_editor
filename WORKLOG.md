@@ -99,3 +99,6 @@ The real fixture passed container integrity and semantic encode/decode round-tri
 - Added missing-key and local-key-file tests. The suite now passes 19 tests; a real story save also
   validated using the local-only key held in memory, and a tracked-file scan found no key literal.
   Private saves, backups, fixtures and key material remain excluded from publication.
+- Published a sanitized one-commit snapshot to remote branch `feat/story-save-schema` as `47eaa3a`.
+  Its parent is the safe `.gitignore` initialization commit, so no earlier local key-bearing commit
+  exists in public remote history. Opened draft PR `#1` against `main`.

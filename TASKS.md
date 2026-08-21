@@ -35,5 +35,5 @@ Status legend: `[x]` verified, `[~]` implemented/awaiting final verification, `[
 - [x] Complete automated unit tests and real-options-save read-only test.
 - [x] Verify story-save edit -> game load -> resave cycle.
 - [x] Build Windows executable and smoke-test it.
-- [~] Publish a sanitized clean history with external key provisioning.
+- [x] Publish a sanitized clean history with external key provisioning and draft PR.
 - [ ] Tag the first verified release.

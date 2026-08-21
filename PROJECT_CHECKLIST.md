@@ -22,5 +22,5 @@
 | Bag | Categories/items/existing quantities | Partial | Live Potion 2 -> 3 write + reload passed |
 | Progress | Dex/flags/daycare/world state | Partial | Story + Quest decoded read-only |
 | Build | Windows executable | Done | GUI and CLI artifacts in `dist` |
-| Backup | Separate GitHub repository | In progress | Sanitized public snapshot ready |
+| Backup | Separate GitHub repository | Done | Sanitized branch + draft PR #1 published |
 | Live test | Edit, game load and in-game resave | Done | Potion 2 -> 3 survived normal game resave |
