@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+build/
+dist/
+release/
+*.spec
+*.bak
+*.tmp
+*.dat
+*.ged
+samples/private/
+backups/
+.build_tcl/
+_tk_test/
