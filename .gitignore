@@ -15,3 +15,5 @@ samples/private/
 backups/
 .build_tcl/
 _tk_test/
+save_key.hex
+.gamma-save-key
