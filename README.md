@@ -1,0 +1,1 @@
+# gamma_emerald_save_editor
