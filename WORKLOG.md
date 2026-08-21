@@ -127,3 +127,5 @@ The real fixture passed container integrity and semantic encode/decode round-tri
   GUI SHA-256: `660F08218BC2C1C1F9F7AAFD45D23D072535FCFC6FC4E6B94C35DBE19636BEC8`.
   CLI SHA-256: `B771933BF0A1B8A231ABF9F95B023FC0C5249F184AF0DBCFB5645CC528593EF0`.
   ZIP SHA-256: `4AA0A5FD099BDFCE86A5677CA5ABDFFAF6ECA8052D1954A5D2A67431BAB9499F`.
+- Published the sanitized v0.3 source as remote commit `ca26e62` and refreshed draft PR `#1`.
+  GitHub's compare lists only the tool's source, tests, packaging and continuity documentation.

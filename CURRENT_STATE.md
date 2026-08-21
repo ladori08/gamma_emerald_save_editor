@@ -28,10 +28,11 @@ Last updated: 2026-08-22
 - The public source no longer embeds the recovered live save-encryption key. Runtime key loading is
   external via `GAMMA_EMERALD_SAVE_KEY_HEX` or ignored `save_key.hex`; a literal scan is clean.
   Live saves, backups and private fixtures remain excluded.
-- Sanitized source is published on remote branch `feat/story-save-schema`; draft PR
-  `#1` targets `main`. The public remote history has never referenced the embedded-key local history.
-- Story-schema implementation is committed locally on `feat/story-save-schema` as `bf3f172`;
-  `origin` points to the new GitHub repository.
+- Sanitized v0.3 source was published on remote branch `feat/story-save-schema` as `ca26e62`;
+  draft PR `#1` targets `main`. The public remote history has never referenced the embedded-key
+  local history.
+- The Indigo-style implementation is committed locally on `feat/story-save-schema` as `8f0d7bf`;
+  `origin` points to the dedicated GitHub repository.
 
 ## Safety status
 
