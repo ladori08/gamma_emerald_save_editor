@@ -47,6 +47,7 @@ def test_ev_total_cap() -> None:
     validate_domain_value(document, props[2], 6)
     with pytest.raises(GvasError, match="maximum is 510"):
         validate_domain_value(document, props[2], 7)
+    validate_domain_value(document, props[2], 252, allow_ev_over_510=True)
 
 
 def test_item_quantity_range() -> None:

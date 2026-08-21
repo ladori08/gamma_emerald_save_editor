@@ -8,6 +8,8 @@ from gamma_editor.gvas import (
     patch_scalar,
     patch_soft_object,
     patch_soft_object_array,
+    patch_structured_array,
+    structured_array_elements,
 )
 
 from conftest import fstring
@@ -203,3 +205,40 @@ def test_patch_move_and_pp_arrays_together() -> None:
         "/Game/Moves/BP_Move_Tackle (BP_Move_Tackle_C)",
     )
     assert after.properties[1].collection_values == (30, 35)
+
+
+def test_extract_append_and_remove_structured_array_elements() -> None:
+    def element(level: int) -> bytes:
+        return b"".join(
+            (
+                _property("Level", _type("IntProperty"), struct.pack("<i", level)),
+                fstring("None"),
+            )
+        )
+
+    first, second = element(5), element(9)
+    payload = struct.pack("<I", 2) + first + second
+    gvas = b"".join(
+        (
+            _base_header(),
+            _property(
+                "Party",
+                _type(
+                    "ArrayProperty",
+                    _type("StructProperty", _type("PokemonInstanceData"), _type("/Script/PokemonEmerald")),
+                ),
+                payload,
+            ),
+            fstring("None"),
+            struct.pack("<I", 0),
+        )
+    )
+    document = parse_gvas(gvas)
+    assert document.property_error is None
+    assert structured_array_elements(document, "Party") == (first, second)
+    raw = patch_structured_array(document, "Party", [second, first, second])
+    after = parse_gvas(raw)
+    assert after.property_error is None
+    assert [item.value for item in after.properties if item.name == "Level"] == [9, 5, 9]
+    restored = patch_structured_array(after, "Party", [first, second])
+    assert restored == gvas

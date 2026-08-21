@@ -27,13 +27,9 @@ The default save folder is:
 %LOCALAPPDATA%\PokemonEmerald\Saved\.ged
 ```
 
-Known slot filenames for user index `0`:
-
-- Story: `859c7fd1524eb8d6726f1233820531b8.dat`
-- Options: `c4986df5d9f9ee63d369a56c49cc538f.dat`
-
-If only the options file exists, start or continue the game and make an in-game save before
-testing gameplay fields.
+Use `gamma-save saves` to identify available slots without recording machine-specific filenames.
+If only the options slot exists, start or continue the game and make an in-game save before testing
+gameplay fields.
 
 ## CLI
 
@@ -52,14 +48,19 @@ gamma-save slot-filename PokemonSaveSlot
 
 ## Editor workspace
 
-Version 0.3 uses an Indigo-style consumer workspace instead of exposing only raw schema rows:
+Version 0.4 uses an Indigo-style consumer workspace instead of exposing raw schema rows:
 
 - Trainer form with synchronized Trainer name/ID edits.
-- Party and 14-box Storage navigation with grouped Main, Stats, Moves, Met and OT/Misc forms.
+- One Pokémon tab combines six Party cards with a compact 5 × 6 current-Box grid. Dragging cards
+  moves or swaps the complete serialized Pokémon between Party and all 14 storage boxes.
 - Verified GE-1.0.0 catalogs containing 118 Species DataAssets and 99 Move Blueprints.
-- Pokémon preview cards, HP bar, IV/EV helpers, four move/PP rows and staged-change workflow.
-- Bag editor for existing item names and quantities, searchable raw properties, backup restore,
-  Pokédex/Progress browser and a legality report covering every verified numeric relationship.
+- Pokémon preview cards, HP bar, IV/EV helpers, optional EV-total limit override, four move/PP rows
+  and staged-change workflow.
+- Bag pocket tabs for Items, Poké Balls, TMs, Berries and Key Items, with filtered add/edit/remove
+  controls. Missing pockets and item rows are inserted through verified structured-array resizing.
+- Pokédex species lookup shows Gamma catalog identity, primary type, Hoenn number, DataAsset and
+  owned Party/Storage locations; it is independent from Seen/Caught save progress.
+- Timestamped backups remain automatic, and the toolbar exposes validated backup restore.
 
 ## Editing status
 
@@ -72,9 +73,10 @@ Version 0.3 uses an Indigo-style consumer workspace instead of exposing only raw
   parent-size propagation, synchronized trainer name/ID, and domain checks for Level, IV, EV total,
   Friendship, Ability Slot, HP/EXP and Bag quantity.
 - Verified staged serializers now cover Species DataAssets, Nature/Gender/status/met enums, up to
-  four Move Blueprint paths, Current/Max PP arrays, and the existing scalar/string fields.
-- Read-only until struct insertion/removal is game-verified: adding/removing Pokémon or Bag rows,
-  resizing Dex sets, and editing Quest flag arrays.
+  four Move Blueprint paths, Current/Max PP arrays, complete Party/Storage Pokémon payload moves,
+  Bag pocket/item insertion/removal, and existing scalar/string fields.
+- Read-only until independently game-verified: creating a brand-new Pokémon from an empty template,
+  resizing Seen/Caught sets, and editing Quest flag arrays.
 
 No user save, decrypted payload, encryption key, or backup is committed to source control.
 

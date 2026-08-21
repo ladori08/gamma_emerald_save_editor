@@ -6,14 +6,14 @@ Last updated: 2026-08-22
 
 1. Story/Quest/Berry/Options all exist and validate. Private unpacked fixtures under
    `samples/private` are ignored and must never be committed.
-2. Current parser baseline: 22,479 story records, no parser error; 23 automated tests.
-3. Current branch is `feat/story-save-schema`; v0.3 implementation commit is `8f0d7bf`.
+2. Current parser baseline: 22,479 story records, no parser error; 24 automated tests.
+3. Current branch is `feat/story-save-schema`; v0.4 changes are awaiting the session commit.
 4. Repository `ladori08/gamma_emerald_save_editor` is public, and the user explicitly approved
    public publication on 2026-08-21.
 5. Publish the initial main history, publish the feature branch, and use a draft PR unless the user
    explicitly requests otherwise.
-6. Local v0.3.0 is built under `release`; packaged GUI/CLI pass against the story save without
-   changing its hash.
+6. Local v0.4.0 is built under `release`; packaged GUI/CLI pass read-only validation against the
+   story save. The game was running, so no v0.4 structural live write was attempted.
 7. The first controlled live write changed Potion quantity 2 -> 3 and passed backup, atomic-write,
    visual game load, normal in-game resave, 22,479-record reparse and packaged CLI validation.
 8. Public source uses external key provisioning via `GAMMA_EMERALD_SAVE_KEY_HEX` or ignored
@@ -21,9 +21,9 @@ Last updated: 2026-08-22
    fixtures. The current tracked-file literal scan is clean.
 9. Sanitized v0.3 snapshot `ca26e62` is on `feat/story-save-schema`; draft PR `#1` targets `main`.
    Remote public history contains only the safe initialization and sanitized feature snapshots.
-10. The v0.3 GUI has Indigo-style Trainer/Party/Storage/Bag/Dex/Legality/Advanced tabs, plus
-    tool-only catalogs for 118 species and 99 moves. Adding/removing variable-size structures and
-    team-builder/damage/custom-item workflows remain deliberately disabled until Gamma-verified.
+10. The v0.4 GUI has Trainer/Pokémon/Bag/Pokédex tabs. Party and Storage share drag/drop cards;
+    Bag has five filtered pockets with add/edit/remove; Pokédex shows species info; EV total cap can
+    be toggled. Real-save in-memory mutation/encrypt/decrypt passes, but live game reload is pending.
 
 ## Local identifiers
 

@@ -13,15 +13,17 @@ Last updated: 2026-08-22
 - GUI, CLI, guarded write/backup service, diagnostics and schema-aware editor implemented.
 - Story GVAS recursively parses more than 22,000 tagged records with no parser error, including
   Party, 14 boxes, Daycare, Bag, Seen/Caught and progress fields.
-- The v0.3 consumer GUI now follows the Indigo workflow: save toolbar, six Party slots, 14 storage
-  boxes, grouped Pokemon forms, Bag editor, Dex/Progress browser, legality report and Advanced
-  diagnostics/backups.
+- The v0.4 consumer GUI has four focused tabs: Trainer, Pokémon, Bag and Pokédex. Party and Storage
+  share one workspace with six Party cards, a compact 5 × 6 Box grid and complete-payload drag/drop.
+- Bag uses the five in-game pockets and supports filtered add/edit/remove, including safe insertion
+  of a previously absent pocket such as TMs. Backup restore remains available from the toolbar.
 - Bundled tool-only catalogs contain 118 Gamma species paths and 99 move paths. Species, nature,
   gender, status, met type, moves and PP are selected from validated controls; no game asset is
   copied into the repository or release.
-- Automated suite passes: 23 tests plus real-story in-memory species/nature/moves/PP
-  edit/encrypt/decrypt verification.
-- Packaged v0.3 GUI and CLI both pass against the real story save without modifying it.
+- Pokédex is now a Gamma species-information lookup rather than a Seen/Caught progress report.
+- Automated suite passes: 24 tests plus real-story in-memory Bag insertion/removal, Party/Storage
+  payload movement, EV-limit override and encrypt/decrypt verification.
+- Packaged v0.4 GUI and CLI both pass read-only validation against the real story save.
 - Local git repository initialized on `main`; initial implementation commit is `39bbe27`.
 - GitHub repository `ladori08/gamma_emerald_save_editor` exists and admin/push access is verified.
   The user explicitly approved publishing it as a public repository on 2026-08-21.
@@ -45,11 +47,11 @@ Last updated: 2026-08-22
 
 ## Current limitation
 
-Adding/removing Pokemon or Bag array elements, Dex/Quest set resizing, fields absent from the young
-save, and a controlled live game reload for species/move replacement remain pending. Indigo's
-team-builder, damage calculator and custom-item creation are not yet Gamma-verified workflows.
-Unsupported or structurally variable fields stay read-only.
+Creating a brand-new Pokémon from an empty template, Dex/Quest set resizing, fields absent from the
+young save, and a controlled live-game reload for the new Bag/Party/Storage structural edits remain
+pending. Pokémon sprites were not bundled so the public repository stays tool-only. Unsupported
+structures remain read-only.
 
 ## Next verified milestone
 
-Review/merge draft PR `#1`, then live-test one species/move edit before tagging a public release.
+Close the game and live-test one Bag insertion plus one Party/Storage move before tagging v0.4.

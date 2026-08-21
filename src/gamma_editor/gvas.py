@@ -721,3 +721,73 @@ def patch_soft_object_array(
         encoded.extend(_encode_fstring(object_name))
         encoded.extend(_encode_fstring(""))
     return _replace_property_payload(document, prop, bytes(encoded))
+
+
+def structured_array_elements(document: GvasDocument, path: str) -> tuple[bytes, ...]:
+    """Return complete serialized elements from a verified Array<Struct> property."""
+    prop = _property_at(document, path, "ArrayProperty")
+    if "StructProperty" not in prop.type_descriptor or prop.value_size < 4:
+        raise GvasError(f"Array at {path!r} is not a structured array.")
+    count = struct.unpack_from("<I", document.raw, prop.value_offset)[0]
+    if count > 100_000:
+        raise GvasError(f"Structured array at {path!r} exceeds the safety limit.")
+    if count == 0:
+        if prop.value_size != 4:
+            raise GvasError(f"Empty structured array at {path!r} has an unexpected payload.")
+        return ()
+    starts: list[int] = []
+    for index in range(count):
+        prefix = f"{path}[{index}]."
+        offsets = [
+            item.header_offset
+            for item in document.properties
+            if item.path.startswith(prefix)
+            and prop.value_offset + 4 <= item.header_offset < prop.end_offset
+        ]
+        if not offsets:
+            raise GvasError(f"Cannot verify element {index} boundaries for {path!r}.")
+        starts.append(min(offsets))
+    if starts[0] != prop.value_offset + 4 or starts != sorted(set(starts)):
+        raise GvasError(f"Structured array at {path!r} has ambiguous element boundaries.")
+    ends = starts[1:] + [prop.end_offset]
+    elements = tuple(document.raw[start:end] for start, end in zip(starts, ends))
+    if any(not element.endswith(_encode_fstring("None")) for element in elements):
+        raise GvasError(f"Structured array at {path!r} has an unverified element terminator.")
+    return elements
+
+
+def patch_structured_array(
+    document: GvasDocument,
+    path: str,
+    elements: list[bytes] | tuple[bytes, ...],
+) -> bytes:
+    """Replace a verified Array<Struct>, including its count and parent size chain."""
+    prop = _property_at(document, path, "ArrayProperty")
+    if "StructProperty" not in prop.type_descriptor:
+        raise GvasError(f"Array at {path!r} is not a structured array.")
+    if len(elements) > 100_000:
+        raise GvasError("Structured array exceeds the safety limit.")
+    terminator = _encode_fstring("None")
+    if any(not isinstance(item, bytes) or not item.endswith(terminator) for item in elements):
+        raise GvasError("Structured array element is missing its verified None terminator.")
+    encoded = struct.pack("<I", len(elements)) + b"".join(elements)
+    rebuilt = _replace_property_payload(document, prop, encoded)
+    reparsed = parse_gvas(rebuilt)
+    if len(structured_array_elements(reparsed, path)) != len(elements):
+        raise GvasError(f"Structured array at {path!r} failed count verification.")
+    return rebuilt
+
+
+def struct_payload(document: GvasDocument, path: str) -> bytes:
+    prop = _property_at(document, path, "StructProperty")
+    payload = document.raw[prop.value_offset : prop.end_offset]
+    if not payload.endswith(_encode_fstring("None")):
+        raise GvasError(f"Struct at {path!r} has an unverified terminator.")
+    return payload
+
+
+def patch_struct_payload(document: GvasDocument, path: str, payload: bytes) -> bytes:
+    prop = _property_at(document, path, "StructProperty")
+    if not payload.endswith(_encode_fstring("None")):
+        raise GvasError("Replacement struct is missing its verified None terminator.")
+    return _replace_property_payload(document, prop, payload)

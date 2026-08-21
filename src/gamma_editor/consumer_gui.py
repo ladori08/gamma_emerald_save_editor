@@ -8,8 +8,11 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 from .catalog import (
+    BAG_POCKETS,
+    BAG_POCKET_LABELS,
     GENDERS,
     HOENN_DEX,
+    ITEMS_BY_POCKET,
     ITEM_NAMES,
     MET_TYPES,
     MOVES,
@@ -23,12 +26,15 @@ from .catalog import (
 from .domain import (
     BagEntry,
     PokemonView,
+    add_bag_item,
     bag_entries,
     box_names,
-    legality_issues,
+    edit_bag_item,
+    move_pokemon,
     party_pokemon,
     patch_domain_values,
     patch_pokemon,
+    remove_bag_item,
     storage_pokemon,
 )
 from .errors import GammaEditorError
@@ -45,7 +51,6 @@ from .save_service import (
 
 
 APP_TITLE = "Gamma Emerald Save Editor"
-STORY_FILENAME = "859c7fd1524eb8d6726f1233820531b8.dat"
 ENUM_PREFIXES = {
     "Nature": "ENature",
     "Gender": "EPokemonGender",
@@ -152,6 +157,7 @@ class PokemonEditor(ttk.Frame):
             ev = tk.StringVar()
             self.vars[stat + "_IV"] = iv
             self.vars[stat + "_EV"] = ev
+            ev.trace_add("write", lambda *_args: self._update_ev_total())
             ttk.Spinbox(stats, textvariable=iv, from_=0, to=31, width=10).grid(row=row, column=1, sticky="w", pady=3)
             ttk.Spinbox(stats, textvariable=ev, from_=0, to=252, width=10).grid(row=row, column=2, sticky="w", pady=3)
         stat_buttons = ttk.Frame(stats)
@@ -159,6 +165,12 @@ class PokemonEditor(ttk.Frame):
         ttk.Button(stat_buttons, text="Max IVs", command=lambda: self._fill_stats("IV", 31)).pack(side="left")
         ttk.Button(stat_buttons, text="Clear EVs", command=lambda: self._fill_stats("EV", 0)).pack(side="left", padx=6)
         ttk.Button(stat_buttons, text="Balanced 510 EV", command=self._balanced_evs).pack(side="left")
+        ttk.Checkbutton(
+            stat_buttons,
+            text="Allow EV total over 510",
+            variable=self.app.allow_ev_over_510,
+            command=self._update_ev_total,
+        ).pack(side="left", padx=(16, 0))
         self.ev_total_var = tk.StringVar(value="EV total: 0 / 510")
         ttk.Label(stats, textvariable=self.ev_total_var, style="Muted.TLabel").grid(
             row=11, column=0, columnspan=4, sticky="w", pady=(8, 0)
@@ -261,7 +273,8 @@ class PokemonEditor(ttk.Frame):
 
     def _update_ev_total(self) -> None:
         total = sum(_number(self.vars[field].get()) for field in self.vars if field.endswith("_EV"))
-        self.ev_total_var.set(f"EV total: {total} / 510")
+        suffix = "limit disabled" if self.app.allow_ev_over_510.get() else "max 510"
+        self.ev_total_var.set(f"EV total: {total} ({suffix})")
 
     def load(self, pokemon: PokemonView | None) -> None:
         self.current = pokemon
@@ -407,10 +420,15 @@ class SaveEditorApp(tk.Tk):
         self.minsize(1080, 680)
         self.loaded: LoadedSave | None = None
         self.working_gvas: bytes | None = None
+        self._cached_gvas: bytes | None = None
+        self._cached_document = None
         self.dirty = False
+        self.allow_ev_over_510 = tk.BooleanVar(value=False)
         self.party_views: list[PokemonView] = []
         self.storage_views: list[PokemonView] = []
         self.bag_views: list[BagEntry] = []
+        self.selected_pokemon_location: tuple[str, int | None, int] = ("party", None, 0)
+        self.drag_source: tuple[str, int | None, int] | None = None
         self._build_style()
         self._build_toolbar()
         self._build_tabs()
@@ -441,6 +459,7 @@ class SaveEditorApp(tk.Tk):
         ttk.Button(header, text="Refresh", command=self.refresh_saves).pack(side="left", padx=3)
         ttk.Button(header, text="Browse…", command=self.open_dialog).pack(side="left", padx=3)
         ttk.Button(header, text="Load", command=self.reload).pack(side="left", padx=3)
+        ttk.Button(header, text="Backups…", command=self.open_backups_dialog).pack(side="left", padx=3)
         self.save_button = ttk.Button(header, text="Save + Backup", command=self.save, state="disabled")
         self.save_button.pack(side="left", padx=(10, 3))
 
@@ -448,25 +467,75 @@ class SaveEditorApp(tk.Tk):
         self.tabs = ttk.Notebook(self)
         self.tabs.pack(fill="both", expand=True, padx=10, pady=(0, 8))
         self.trainer_tab = ttk.Frame(self.tabs, padding=12)
-        self.party_tab = ttk.Frame(self.tabs, padding=8)
-        self.storage_tab = ttk.Frame(self.tabs, padding=8)
+        self.pokemon_tab = ttk.Frame(self.tabs, padding=8)
         self.bag_tab = ttk.Frame(self.tabs, padding=10)
         self.dex_tab = ttk.Frame(self.tabs, padding=10)
-        self.legality_tab = ttk.Frame(self.tabs, padding=10)
-        self.advanced_tab = ttk.Frame(self.tabs, padding=8)
         for frame, label in (
-            (self.trainer_tab, "Trainer"), (self.party_tab, "Party"), (self.storage_tab, "Storage"),
-            (self.bag_tab, "Bag"), (self.dex_tab, "Pokédex / Progress"),
-            (self.legality_tab, "Legality Check"), (self.advanced_tab, "Advanced"),
+            (self.trainer_tab, "Trainer"), (self.pokemon_tab, "Pokémon"),
+            (self.bag_tab, "Bag"), (self.dex_tab, "Pokédex"),
         ):
             self.tabs.add(frame, text=label)
         self._build_trainer()
-        self._build_party()
-        self._build_storage()
+        self._build_pokemon()
         self._build_bag()
         self._build_dex()
-        self._build_legality()
-        self._build_advanced()
+
+    def _build_pokemon(self) -> None:
+        self.pokemon_tab.rowconfigure(0, weight=1)
+        self.pokemon_tab.columnconfigure(1, weight=1)
+        roster = ttk.Frame(self.pokemon_tab, padding=(2, 2, 10, 2))
+        roster.grid(row=0, column=0, sticky="ns")
+
+        ttk.Label(roster, text="Party", style="SectionTitle.TLabel").pack(anchor="w")
+        ttk.Label(
+            roster, text="Drag a Pokémon card between Party and the current Box.", style="Muted.TLabel"
+        ).pack(anchor="w", pady=(1, 6))
+        self.party_grid = ttk.Frame(roster)
+        self.party_grid.pack(fill="x")
+        self.party_cards: list[tk.Label] = []
+        for index in range(6):
+            card = tk.Label(
+                self.party_grid, width=16, height=3, relief="ridge", borderwidth=1,
+                bg="#f2f5f7", anchor="center", justify="center", cursor="hand2",
+            )
+            card.grid(row=index // 3, column=index % 3, sticky="nsew", padx=2, pady=2)
+            card.pokemon_location = ("party", None, index)  # type: ignore[attr-defined]
+            card.bind("<ButtonPress-1>", lambda _event, loc=card.pokemon_location: self._on_pokemon_press(loc))
+            card.bind("<ButtonRelease-1>", self._on_pokemon_release)
+            self.party_cards.append(card)
+
+        controls = ttk.Frame(roster)
+        controls.pack(fill="x", pady=(14, 5))
+        ttk.Label(controls, text="Storage Box:", style="SectionTitle.TLabel").pack(side="left")
+        self.box_var = tk.StringVar()
+        self.box_combo = ttk.Combobox(controls, textvariable=self.box_var, state="readonly", width=18)
+        self.box_combo.pack(side="left", padx=5)
+        self.box_combo.bind("<<ComboboxSelected>>", lambda _event: self._refresh_pokemon_workspace())
+        ttk.Button(controls, text="◀", width=3, command=lambda: self._step_box(-1)).pack(side="left")
+        ttk.Button(controls, text="▶", width=3, command=lambda: self._step_box(1)).pack(side="left", padx=2)
+
+        self.storage_grid = ttk.Frame(roster)
+        self.storage_grid.pack(fill="both", expand=True)
+        self.storage_cards: list[tk.Label] = []
+        for index in range(30):
+            card = tk.Label(
+                self.storage_grid, width=10, height=3, relief="ridge", borderwidth=1,
+                bg="#f7f8f9", anchor="center", justify="center", cursor="hand2",
+            )
+            card.grid(row=index // 5, column=index % 5, sticky="nsew", padx=2, pady=2)
+            card.bind(
+                "<ButtonPress-1>",
+                lambda _event, slot=index: self._on_pokemon_press(("storage", self._selected_box_index(), slot)),
+            )
+            card.bind("<ButtonRelease-1>", self._on_pokemon_release)
+            self.storage_cards.append(card)
+        for column in range(5):
+            self.storage_grid.columnconfigure(column, weight=1)
+        for row in range(6):
+            self.storage_grid.rowconfigure(row, weight=1)
+
+        self.pokemon_editor = PokemonEditor(self.pokemon_tab, self, "Pokémon")
+        self.pokemon_editor.grid(row=0, column=1, sticky="nsew")
 
     def _build_trainer(self) -> None:
         self.trainer_tab.columnconfigure(1, weight=1)
@@ -539,57 +608,91 @@ class SaveEditorApp(tk.Tk):
     def _build_bag(self) -> None:
         self.bag_tab.rowconfigure(1, weight=1)
         self.bag_tab.columnconfigure(0, weight=1)
-        ttk.Label(self.bag_tab, text="Bag", style="AppTitle.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 8))
+        header = ttk.Frame(self.bag_tab)
+        header.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        ttk.Label(header, text="Bag", style="AppTitle.TLabel").pack(side="left")
+        ttk.Button(header, text="+ Add Item", command=self.open_add_item_dialog).pack(side="right")
         body = ttk.Panedwindow(self.bag_tab, orient="horizontal")
         body.grid(row=1, column=0, sticky="nsew")
         listing = ttk.Frame(body)
         editor = ttk.Frame(body, padding=14)
         body.add(listing, weight=4)
         body.add(editor, weight=2)
-        self.bag_tree = ttk.Treeview(listing, columns=("pocket", "item", "quantity"), show="headings")
-        for name, title, width in (("pocket", "Pocket", 140), ("item", "Item", 220), ("quantity", "Quantity", 90)):
-            self.bag_tree.heading(name, text=title)
-            self.bag_tree.column(name, width=width, anchor="w")
-        self.bag_tree.pack(fill="both", expand=True)
-        self.bag_tree.bind("<<TreeviewSelect>>", self._on_bag_selected)
+        self.bag_pocket_tabs = ttk.Notebook(listing)
+        self.bag_pocket_tabs.pack(fill="both", expand=True)
+        self.bag_trees: dict[str, ttk.Treeview] = {}
+        for pocket in BAG_POCKETS:
+            frame = ttk.Frame(self.bag_pocket_tabs, padding=4)
+            self.bag_pocket_tabs.add(frame, text=BAG_POCKET_LABELS[pocket])
+            tree = ttk.Treeview(frame, columns=("item", "quantity"), show="headings")
+            tree.heading("item", text="Item")
+            tree.heading("quantity", text="Quantity")
+            tree.column("item", width=320, anchor="w")
+            tree.column("quantity", width=100, anchor="center")
+            tree.pack(fill="both", expand=True)
+            tree.bind("<<TreeviewSelect>>", lambda _event, name=pocket: self._on_bag_selected(name))
+            self.bag_trees[pocket] = tree
         ttk.Label(editor, text="Selected item", style="SectionTitle.TLabel").grid(row=0, column=0, columnspan=2, sticky="w")
+        self.bag_pocket_var = tk.StringVar(value="—")
         self.bag_name_var = tk.StringVar()
         self.bag_qty_var = tk.StringVar()
-        ttk.Label(editor, text="Name").grid(row=1, column=0, sticky="w", pady=(14, 5))
-        ttk.Combobox(editor, textvariable=self.bag_name_var, values=ITEM_NAMES).grid(row=1, column=1, sticky="ew", pady=(14, 5))
-        ttk.Label(editor, text="Quantity").grid(row=2, column=0, sticky="w", pady=5)
-        ttk.Spinbox(editor, textvariable=self.bag_qty_var, from_=0, to=9999).grid(row=2, column=1, sticky="ew", pady=5)
+        ttk.Label(editor, text="Pocket").grid(row=1, column=0, sticky="w", pady=(14, 5))
+        ttk.Label(editor, textvariable=self.bag_pocket_var, style="Bold.TLabel").grid(row=1, column=1, sticky="w", pady=(14, 5))
+        ttk.Label(editor, text="Item").grid(row=2, column=0, sticky="w", pady=5)
+        self.bag_name_combo = ttk.Combobox(editor, textvariable=self.bag_name_var, state="readonly")
+        self.bag_name_combo.grid(row=2, column=1, sticky="ew", pady=5)
+        ttk.Label(editor, text="Quantity").grid(row=3, column=0, sticky="w", pady=5)
+        ttk.Spinbox(editor, textvariable=self.bag_qty_var, from_=1, to=9999).grid(row=3, column=1, sticky="ew", pady=5)
         self.bag_apply_button = ttk.Button(editor, text="Apply staged changes", command=self.apply_bag, state="disabled")
-        self.bag_apply_button.grid(row=3, column=0, columnspan=2, sticky="w", pady=(14, 0))
-        ttk.Label(
-            editor,
-            text="Existing rows can be renamed or re-quantified. Adding/removing array rows remains locked.",
-            style="Muted.TLabel",
-            wraplength=320,
-        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(10, 0))
+        self.bag_apply_button.grid(row=4, column=0, sticky="w", pady=(14, 0))
+        self.bag_remove_button = ttk.Button(editor, text="Remove Item", command=self.remove_selected_bag_item, state="disabled")
+        self.bag_remove_button.grid(row=4, column=1, sticky="w", pady=(14, 0), padx=(8, 0))
+        ttk.Label(editor, text="All edits stay staged until Save + Backup.", style="Muted.TLabel").grid(
+            row=5, column=0, columnspan=2, sticky="w", pady=(10, 0)
+        )
         editor.columnconfigure(1, weight=1)
 
     def _build_dex(self) -> None:
-        self.dex_tab.rowconfigure(2, weight=1)
+        self.dex_tab.rowconfigure(1, weight=1)
         self.dex_tab.columnconfigure(0, weight=1)
-        ttk.Label(self.dex_tab, text="Pokédex & Progress", style="AppTitle.TLabel").grid(row=0, column=0, sticky="w")
-        summary = ttk.Frame(self.dex_tab)
-        summary.grid(row=1, column=0, sticky="ew", pady=8)
-        self.seen_var = tk.StringVar(value="Seen: 0")
-        self.caught_var = tk.StringVar(value="Caught: 0")
-        self.starter_var = tk.StringVar(value="Starter: —")
-        for var in (self.seen_var, self.caught_var, self.starter_var):
-            ttk.Label(summary, textvariable=var, style="SectionTitle.TLabel").pack(side="left", padx=(0, 28))
-        self.dex_tree = ttk.Treeview(self.dex_tab, columns=("id", "species", "seen", "caught"), show="headings")
-        for name, title, width in (("id", "Hoenn #", 80), ("species", "Species", 230), ("seen", "Seen", 80), ("caught", "Caught", 80)):
+        header = ttk.Frame(self.dex_tab)
+        header.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        ttk.Label(header, text="Pokédex", style="AppTitle.TLabel").pack(side="left")
+        ttk.Label(header, text="Search:").pack(side="left", padx=(28, 5))
+        self.dex_search_var = tk.StringVar()
+        dex_search = ttk.Entry(header, textvariable=self.dex_search_var, width=30)
+        dex_search.pack(side="left")
+        dex_search.bind("<KeyRelease>", lambda _event: self._refresh_dex(self.current_document()))
+        body = ttk.Panedwindow(self.dex_tab, orient="horizontal")
+        body.grid(row=1, column=0, sticky="nsew")
+        listing = ttk.Frame(body)
+        details = ttk.Frame(body, padding=16)
+        body.add(listing, weight=2)
+        body.add(details, weight=3)
+        self.dex_tree = ttk.Treeview(listing, columns=("id", "species", "type"), show="headings")
+        for name, title, width in (("id", "Hoenn #", 80), ("species", "Pokémon", 220), ("type", "Primary type", 120)):
             self.dex_tree.heading(name, text=title)
             self.dex_tree.column(name, width=width, anchor="w")
-        self.dex_tree.grid(row=2, column=0, sticky="nsew")
+        self.dex_tree.pack(fill="both", expand=True)
+        self.dex_tree.bind("<<TreeviewSelect>>", self._on_dex_selected)
+        ttk.Label(details, text="Pokémon information", style="SectionTitle.TLabel").grid(
+            row=0, column=0, columnspan=2, sticky="w", pady=(0, 10)
+        )
+        self.dex_detail_vars: dict[str, tk.StringVar] = {}
+        for row, (label, key) in enumerate((
+            ("Name", "name"), ("Hoenn number", "number"), ("Primary type", "type"),
+            ("Gamma DataAsset", "asset"), ("Owned locations", "owned"),
+        ), start=1):
+            ttk.Label(details, text=label + ":", width=18).grid(row=row, column=0, sticky="nw", pady=5)
+            var = tk.StringVar(value="—")
+            self.dex_detail_vars[key] = var
+            ttk.Label(details, textvariable=var, wraplength=620).grid(row=row, column=1, sticky="nw", pady=5)
         ttk.Label(
-            self.dex_tab,
-            text="Seen/Caught sets are decoded for browsing. Set resizing stays read-only until its UE5 serializer is game-verified.",
-            style="Muted.TLabel",
-        ).grid(row=3, column=0, sticky="w", pady=(8, 0))
+            details,
+            text="This Pokédex describes the Pokémon assets available in Gamma GE-1.0.0; it is independent from your in-game Seen/Caught progress.",
+            style="Muted.TLabel", wraplength=650,
+        ).grid(row=7, column=0, columnspan=2, sticky="w", pady=(18, 0))
+        details.columnconfigure(1, weight=1)
 
     def _build_legality(self) -> None:
         self.legality_tab.rowconfigure(2, weight=1)
@@ -677,7 +780,7 @@ class SaveEditorApp(tk.Tk):
 
     def _open_default(self) -> None:
         saves = discover_saves()
-        choice = next((path for path in saves if path.name == STORY_FILENAME), saves[0] if saves else None)
+        choice = max(saves, key=lambda path: path.stat().st_size) if saves else None
         if choice:
             self.open_save(choice)
         else:
@@ -699,6 +802,45 @@ class SaveEditorApp(tk.Tk):
         if path:
             self.open_save(Path(path))
 
+    def open_backups_dialog(self) -> None:
+        if self.loaded is None:
+            messagebox.showinfo(APP_TITLE, "Load a save first.")
+            return
+        dialog = tk.Toplevel(self)
+        dialog.title("Save Backups")
+        dialog.transient(self)
+        dialog.geometry("900x420")
+        dialog.rowconfigure(0, weight=1)
+        dialog.columnconfigure(0, weight=1)
+        tree = ttk.Treeview(dialog, columns=("time", "size", "path"), show="headings")
+        for name, title, width in (("time", "Time", 180), ("size", "Size", 100), ("path", "Backup", 560)):
+            tree.heading(name, text=title)
+            tree.column(name, width=width, anchor="w")
+        tree.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
+        for path in list_backups(self.loaded.path):
+            stat = path.stat()
+            tree.insert(
+                "", "end", iid=str(path),
+                values=(datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S"), f"{stat.st_size:,}", str(path)),
+            )
+
+        def restore() -> None:
+            selected = tree.selection()
+            if not selected or self.loaded is None:
+                return
+            backup = Path(selected[0])
+            if not messagebox.askyesno(APP_TITLE, f"Restore this backup?\n\n{backup}", parent=dialog):
+                return
+            try:
+                safety = restore_backup(self.loaded.path, backup)
+                dialog.destroy()
+                self.open_save(self.loaded.path)
+                messagebox.showinfo(APP_TITLE, f"Backup restored.\nPre-restore copy: {safety}")
+            except (OSError, GammaEditorError) as exc:
+                messagebox.showerror(APP_TITLE, str(exc), parent=dialog)
+
+        ttk.Button(dialog, text="Restore selected", command=restore).grid(row=1, column=0, sticky="e", padx=10, pady=(0, 10))
+
     def open_save(self, path: Path) -> None:
         try:
             self.loaded = load_save(path)
@@ -715,7 +857,12 @@ class SaveEditorApp(tk.Tk):
             self.open_save(self.loaded.path)
 
     def current_document(self):
-        return parse_gvas(self.working_gvas) if self.working_gvas is not None else None
+        if self.working_gvas is None:
+            return None
+        if self._cached_gvas is not self.working_gvas:
+            self._cached_document = parse_gvas(self.working_gvas)
+            self._cached_gvas = self.working_gvas
+        return self._cached_document
 
     def _refresh_all(self) -> None:
         doc = self.current_document()
@@ -724,19 +871,13 @@ class SaveEditorApp(tk.Tk):
         self.party_views = party_pokemon(doc)
         self.bag_views = bag_entries(doc)
         self._refresh_trainer(doc)
-        self._refresh_party()
         names = box_names(doc)
         current_box = self.box_var.get()
         self.box_combo.configure(values=names)
         self.box_var.set(current_box if current_box in names else (names[0] if names else ""))
-        self._refresh_storage()
+        self._refresh_pokemon_workspace()
         self._refresh_bag()
         self._refresh_dex(doc)
-        self._refresh_legality(doc)
-        self._refresh_overview(doc)
-        self._refresh_properties()
-        self._refresh_backups()
-        self._refresh_diagnostics(doc)
         self._update_dirty_ui()
 
     def _refresh_trainer(self, doc) -> None:
@@ -786,7 +927,96 @@ class SaveEditorApp(tk.Tk):
             return
         index = (self._selected_box_index() + delta) % len(values)
         self.box_var.set(values[index])
-        self._refresh_storage()
+        self._refresh_pokemon_workspace()
+
+    def _refresh_pokemon_workspace(self) -> None:
+        doc = self.current_document()
+        if doc is None:
+            return
+        self.party_views = party_pokemon(doc)
+        box = self._selected_box_index()
+        self.storage_views = storage_pokemon(doc, box)
+        party_by_slot = {item.slot_index: item for item in self.party_views}
+        storage_by_slot = {item.slot_index: item for item in self.storage_views}
+        selected = self.selected_pokemon_location
+        if selected[0] == "storage" and selected[1] != box:
+            selected = ("storage", box, selected[2])
+            self.selected_pokemon_location = selected
+        for index, card in enumerate(self.party_cards):
+            pokemon = party_by_slot.get(index)
+            text = f"{index + 1}\n{pokemon.species}\nLv {_number(pokemon.fields.get('Level'))}" if pokemon else f"{index + 1}\n(empty)"
+            card.configure(
+                text=text,
+                bg="#d9edf7" if selected == ("party", None, index) else "#f2f5f7",
+                relief="solid" if selected == ("party", None, index) else "ridge",
+                borderwidth=2 if selected == ("party", None, index) else 1,
+            )
+        for index, card in enumerate(self.storage_cards):
+            location = ("storage", box, index)
+            card.pokemon_location = location  # type: ignore[attr-defined]
+            pokemon = storage_by_slot.get(index)
+            occupied = bool(pokemon and pokemon.occupied)
+            text = f"{index + 1}\n{pokemon.species}\nLv {_number(pokemon.fields.get('Level'))}" if occupied else f"{index + 1}\n—"
+            card.configure(
+                text=text,
+                bg="#d9edf7" if selected == location else ("#eef7e9" if occupied else "#f7f8f9"),
+                relief="solid" if selected == location else "ridge",
+                borderwidth=2 if selected == location else 1,
+            )
+        self._select_pokemon_location(selected, refresh_cards=False)
+
+    def _select_pokemon_location(
+        self,
+        location: tuple[str, int | None, int],
+        *,
+        refresh_cards: bool = True,
+    ) -> None:
+        kind, box, slot = location
+        self.selected_pokemon_location = location
+        if kind == "party":
+            pokemon = next((item for item in self.party_views if item.slot_index == slot), None)
+        else:
+            pokemon = next((item for item in self.storage_views if item.slot_index == slot), None)
+        self.pokemon_editor.load(pokemon)
+        if refresh_cards:
+            self._refresh_pokemon_workspace()
+
+    def _on_pokemon_press(self, location: tuple[str, int | None, int]) -> None:
+        self.drag_source = location
+        self._select_pokemon_location(location)
+        self.status_var.set("Drag to another Party or Storage card to move/swap the complete Pokémon.")
+
+    def _on_pokemon_release(self, event) -> None:
+        source = self.drag_source
+        self.drag_source = None
+        if source is None:
+            return
+        widget = self.winfo_containing(event.x_root, event.y_root)
+        target = None
+        while widget is not None:
+            target = getattr(widget, "pokemon_location", None)
+            if target is not None:
+                break
+            widget = getattr(widget, "master", None)
+        if target is None or target == source:
+            return
+        doc = self.current_document()
+        if doc is None:
+            return
+        party_count = len(self.party_views)
+        try:
+            raw = move_pokemon(
+                doc,
+                source_kind=source[0], source_box=source[1], source_slot=source[2],
+                target_kind=target[0], target_box=target[1], target_slot=target[2],
+            )
+            if target[0] == "party" and target[2] >= party_count:
+                target = ("party", None, party_count - (1 if source[0] == "party" else 0))
+            self.selected_pokemon_location = target
+            self.working_gvas = raw
+            self._mark_staged("Staged Pokémon move/swap")
+        except (ValueError, GammaEditorError) as exc:
+            messagebox.showerror(APP_TITLE, str(exc))
 
     def _refresh_storage(self) -> None:
         doc = self.current_document()
@@ -820,41 +1050,156 @@ class SaveEditorApp(tk.Tk):
         self.storage_editor.load(pokemon)
 
     def _refresh_bag(self) -> None:
-        selected = self.bag_tree.selection()
-        selected_iid = selected[0] if selected else "0"
-        self.bag_tree.delete(*self.bag_tree.get_children())
-        for index, item in enumerate(self.bag_views):
-            self.bag_tree.insert("", "end", iid=str(index), values=(item.category, item.name, item.quantity))
-        if self.bag_tree.exists(selected_iid):
-            self.bag_tree.selection_set(selected_iid)
-            self._on_bag_selected()
-
-    def _on_bag_selected(self, _event=None) -> None:
-        selected = self.bag_tree.selection()
-        if not selected:
+        selected_prefix = getattr(self, "selected_bag_prefix", None)
+        self.bag_iid_map: dict[tuple[str, str], BagEntry] = {}
+        selected_location: tuple[str, str] | None = None
+        for pocket, tree in self.bag_trees.items():
+            tree.delete(*tree.get_children())
+            entries = [item for item in self.bag_views if item.category == pocket]
+            for row, item in enumerate(entries):
+                iid = str(row)
+                tree.insert("", "end", iid=iid, values=(item.name, item.quantity))
+                self.bag_iid_map[(pocket, iid)] = item
+                if item.prefix == selected_prefix:
+                    selected_location = (pocket, iid)
+        if selected_location:
+            pocket, iid = selected_location
+            self.bag_trees[pocket].selection_set(iid)
+            self._on_bag_selected(pocket)
+        else:
+            self.selected_bag_entry = None
+            self.bag_pocket_var.set("—")
+            self.bag_name_var.set("")
+            self.bag_qty_var.set("")
             self.bag_apply_button.configure(state="disabled")
+            self.bag_remove_button.configure(state="disabled")
+
+    def _on_bag_selected(self, pocket: str) -> None:
+        tree = self.bag_trees[pocket]
+        selected = tree.selection()
+        if not selected:
             return
-        item = self.bag_views[int(selected[0])]
+        for other_pocket, other_tree in self.bag_trees.items():
+            if other_pocket != pocket:
+                other_tree.selection_remove(*other_tree.selection())
+        item = self.bag_iid_map[(pocket, selected[0])]
+        self.selected_bag_entry = item
+        self.selected_bag_prefix = item.prefix
+        self.bag_pocket_var.set(BAG_POCKET_LABELS.get(pocket, pocket))
+        self.bag_name_combo.configure(values=[choice.name for choice in ITEMS_BY_POCKET[pocket]])
         self.bag_name_var.set(item.name)
         self.bag_qty_var.set(str(item.quantity))
         self.bag_apply_button.configure(state="normal")
+        self.bag_remove_button.configure(state="normal")
+
+    def open_add_item_dialog(self) -> None:
+        dialog = tk.Toplevel(self)
+        dialog.title("Add Item")
+        dialog.transient(self)
+        dialog.grab_set()
+        dialog.resizable(False, False)
+        pocket_var = tk.StringVar()
+        item_var = tk.StringVar()
+        qty_var = tk.StringVar(value="1")
+        labels = [BAG_POCKET_LABELS[pocket] for pocket in BAG_POCKETS]
+        label_to_pocket = {BAG_POCKET_LABELS[pocket]: pocket for pocket in BAG_POCKETS}
+        ttk.Label(dialog, text="Pocket").grid(row=0, column=0, sticky="w", padx=12, pady=(14, 6))
+        pocket_combo = ttk.Combobox(dialog, textvariable=pocket_var, values=labels, state="readonly", width=28)
+        pocket_combo.grid(row=0, column=1, sticky="ew", padx=(0, 12), pady=(14, 6))
+        ttk.Label(dialog, text="Item").grid(row=1, column=0, sticky="w", padx=12, pady=6)
+        item_combo = ttk.Combobox(dialog, textvariable=item_var, state="disabled", width=28)
+        item_combo.grid(row=1, column=1, sticky="ew", padx=(0, 12), pady=6)
+        ttk.Label(dialog, text="Quantity").grid(row=2, column=0, sticky="w", padx=12, pady=6)
+        ttk.Spinbox(dialog, textvariable=qty_var, from_=1, to=9999, width=29).grid(
+            row=2, column=1, sticky="ew", padx=(0, 12), pady=6
+        )
+
+        def pocket_changed(_event=None) -> None:
+            pocket = label_to_pocket.get(pocket_var.get())
+            item_var.set("")
+            item_combo.configure(
+                state="readonly" if pocket else "disabled",
+                values=[choice.name for choice in ITEMS_BY_POCKET[pocket]] if pocket else (),
+            )
+
+        def add() -> None:
+            doc = self.current_document()
+            pocket = label_to_pocket.get(pocket_var.get())
+            if doc is None or pocket is None or not item_var.get():
+                messagebox.showerror(APP_TITLE, "Choose a pocket and an item.", parent=dialog)
+                return
+            try:
+                self.working_gvas = add_bag_item(doc, pocket, item_var.get(), int(qty_var.get()))
+                dialog.destroy()
+                self._mark_staged(f"Staged add/update: {item_var.get()}")
+            except (ValueError, GammaEditorError) as exc:
+                messagebox.showerror(APP_TITLE, str(exc), parent=dialog)
+
+        pocket_combo.bind("<<ComboboxSelected>>", pocket_changed)
+        ttk.Button(dialog, text="Add Item", command=add).grid(row=3, column=1, sticky="e", padx=12, pady=(10, 14))
+        dialog.bind("<Return>", lambda _event: add())
+
+    def remove_selected_bag_item(self) -> None:
+        doc = self.current_document()
+        item = getattr(self, "selected_bag_entry", None)
+        if doc is None or item is None:
+            return
+        if not messagebox.askyesno(APP_TITLE, f"Remove {item.name} from {BAG_POCKET_LABELS.get(item.category, item.category)}?"):
+            return
+        try:
+            self.working_gvas = remove_bag_item(doc, item)
+            self.selected_bag_prefix = None
+            self._mark_staged(f"Staged removal: {item.name}")
+        except (ValueError, GammaEditorError) as exc:
+            messagebox.showerror(APP_TITLE, str(exc))
 
     def _refresh_dex(self, doc) -> None:
-        by_path = {item.path: item for item in doc.properties}
-        seen_prop = by_path.get("SeenPokemon")
-        caught_prop = by_path.get("CaughtPokemon")
-        seen = {int(value) for value in (seen_prop.collection_values if seen_prop else ())}
-        caught = {int(value) for value in (caught_prop.collection_values if caught_prop else ())}
-        self.seen_var.set(f"Seen: {len(seen)}")
-        self.caught_var.set(f"Caught: {len(caught)}")
-        starter = by_path.get("PickedStarter")
-        self.starter_var.set(f"Starter: {_enum_leaf(starter.value) if starter else '—'}")
+        if doc is None:
+            return
+        selected = self.dex_tree.selection()
+        selected_name = selected[0] if selected else ""
+        needle = self.dex_search_var.get().strip().casefold()
+        dex_by_name = {name: number for number, name in HOENN_DEX.items()}
         self.dex_tree.delete(*self.dex_tree.get_children())
-        ids = sorted(set(HOENN_DEX) | seen | caught)
-        for dex_id in ids:
+        for species in SPECIES:
+            haystack = f"{species.name} {species.category} {dex_by_name.get(species.name, '')}".casefold()
+            if needle and needle not in haystack:
+                continue
             self.dex_tree.insert(
-                "", "end", values=(dex_id, HOENN_DEX.get(dex_id, "Unknown / not catalogued"), "✓" if dex_id in seen else "", "✓" if dex_id in caught else "")
+                "", "end", iid=species.name,
+                values=(dex_by_name.get(species.name, "—"), species.name, species.category),
             )
+        children = self.dex_tree.get_children()
+        choice = selected_name if selected_name and self.dex_tree.exists(selected_name) else (children[0] if children else "")
+        if choice:
+            self.dex_tree.selection_set(choice)
+            self.dex_tree.see(choice)
+            self._on_dex_selected()
+
+    def _on_dex_selected(self, _event=None) -> None:
+        selected = self.dex_tree.selection()
+        if not selected:
+            return
+        name = selected[0]
+        species = SPECIES_BY_NAME.get(name.casefold())
+        if species is None:
+            return
+        dex_by_name = {value: key for key, value in HOENN_DEX.items()}
+        locations: list[str] = []
+        for pokemon in self.party_views:
+            if pokemon.species == species.name:
+                locations.append(f"Party {pokemon.slot_index + 1}")
+        doc = self.current_document()
+        if doc is not None:
+            for box_index, box_name in enumerate(box_names(doc)):
+                for pokemon in storage_pokemon(doc, box_index):
+                    if pokemon.occupied and pokemon.species == species.name:
+                        locations.append(f"{box_name} / Slot {pokemon.slot_index + 1}")
+        self.dex_detail_vars["name"].set(species.name)
+        self.dex_detail_vars["number"].set(str(dex_by_name.get(species.name, "Not mapped")))
+        self.dex_detail_vars["type"].set(species.category)
+        self.dex_detail_vars["asset"].set(species.path)
+        self.dex_detail_vars["owned"].set(", ".join(locations) if locations else "None in Party/Storage")
 
     def _refresh_legality(self, doc) -> None:
         findings = legality_issues(doc)
@@ -965,28 +1310,24 @@ class SaveEditorApp(tk.Tk):
         self.working_gvas = patch_pokemon(
             doc, pokemon, scalar_changes=scalar_changes, species=species, moves=moves,
             current_pp=current_pp, max_pp=max_pp,
+            allow_ev_over_510=self.allow_ev_over_510.get(),
         )
         count = len(scalar_changes) + (1 if species else 0) + (1 if moves is not None else 0)
         self._mark_staged(f"Staged {count} change group(s) for {pokemon.species}")
 
     def apply_bag(self) -> None:
         doc = self.current_document()
-        selected = self.bag_tree.selection()
-        if doc is None or not selected:
+        item = getattr(self, "selected_bag_entry", None)
+        if doc is None or item is None:
             return
-        item = self.bag_views[int(selected[0])]
         try:
             quantity = int(self.bag_qty_var.get())
-            changes = {
-                item.prefix + ".ItemName": self.bag_name_var.get().strip(),
-                item.prefix + ".Quantity": quantity,
-            }
-            by_path = {prop.path: prop for prop in doc.properties}
-            changes = {path: value for path, value in changes.items() if by_path[path].value != value}
-            if not changes:
+            item_name = self.bag_name_var.get().strip()
+            if item_name == item.name and quantity == item.quantity:
                 self.status_var.set("Bag: no changes to stage")
                 return
-            self.working_gvas = patch_domain_values(doc, changes)
+            self.working_gvas = edit_bag_item(doc, item, item_name, quantity)
+            self.selected_bag_prefix = item.prefix
             self._mark_staged(f"Staged Bag edit: {item.name}")
         except (ValueError, GammaEditorError) as exc:
             messagebox.showerror(APP_TITLE, str(exc))

@@ -16,13 +16,17 @@
 | Recovery | Validated backup restore | Done | Service implementation |
 | UX | GUI overview/properties/backups/diagnostics | Done | Packaged smoke test exit 0 |
 | UX | Indigo-style Trainer/Party/Storage/Bag/Dex/Legality workspace | Done | Real-save GUI interaction + packaged smoke test |
+| UX | Unified Party/Storage cards with drag/drop | Partial | Real-save in-memory payload move; live reload pending |
+| UX | Focused Trainer/Pokémon/Bag/Pokédex navigation | Done | Source + packaged GUI smoke tests |
 | CLI | list/summary/validate/unpack/pack/name | Done | Real options save |
 | Trainer | Identity/time/location + synchronized name/ID | Partial | Real story save + in-memory write |
 | Party | Pokemon/stats/IV/EV/HP/friendship | Done | Real Party record + validated writes |
 | Party | Species/nature/moves/PP catalogs and writes | Partial | Real-save in-memory round-trip; live reload pending |
 | Storage | 14 boxes × 30 Pokemon records | Done | 420 slots parsed |
-| Bag | Categories/items/existing quantities | Partial | Live Potion 2 -> 3 write + reload passed |
+| Storage | Complete Party/Box payload move and swap | Partial | In-memory GVAS + GES1 round-trip |
+| Bag | Five pocket tabs + filtered add/edit/remove | Partial | In-memory GVAS + GES1 round-trip; live reload pending |
 | Progress | Dex/flags/daycare/world state | Partial | Story + Quest decoded read-only |
-| Build | Windows executable | Done | v0.3.0 GUI/CLI/release ZIP smoke-tested |
+| Pokédex | Gamma species information lookup | Done | 118-asset catalog + owned-location lookup |
+| Build | Windows executable | Done | v0.4.0 GUI/CLI/release ZIP smoke-tested |
 | Backup | Separate GitHub repository | Done | Sanitized branch + draft PR #1 published |
 | Live test | Edit, game load and in-game resave | Done | Potion 2 -> 3 survived normal game resave |

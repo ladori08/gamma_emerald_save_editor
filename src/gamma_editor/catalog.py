@@ -12,6 +12,12 @@ class AssetChoice:
     category: str
 
 
+@dataclass(slots=True, frozen=True)
+class ItemChoice:
+    name: str
+    pocket: str
+
+
 def display_name(token: str) -> str:
     overrides = {
         "Gecqua": "Gecqua",
@@ -279,17 +285,44 @@ GENDERS = ("Male", "Female", "Genderless")
 STATUS_CONDITIONS = ("None", "Sleep", "Poison", "Burn", "Paralysis", "Freeze", "BadlyPoisoned")
 MET_TYPES = ("Caught", "Gift", "Egg", "Traded", "FatefulEncounter")
 
-ITEM_NAMES = (
-    "None", "Potion", "Super Potion", "Revive", "Antidote", "Awakening", "Burn Heal",
-    "Ice Heal", "Paralyze Heal", "Full Heal", "Full Restore", "Fresh Water", "Elixir",
-    "Ether", "Repel", "Rare Candy", "Pokeball", "Great Ball", "Ultra Ball", "Premier Ball",
-    "Luxury Ball", "Repeat Ball", "Timer Ball", "Cherish Ball", "Shimmer Ball", "Oran Berry",
-    "Sitrus Berry", "Chesto Berry", "Pecha Berry", "Persim Berry", "Passho Berry", "Payapa Berry",
-    "Durin Berry", "Pamtre Berry", "Amulet Coin", "Everstone", "Hard Stone", "Heart Scale",
-    "King's Rock", "Lagging Tail", "Leftovers", "Light Ball", "Miracle Seed", "Quick Claw",
-    "Silk Scarf", "Soft Sand", "Soothe Bell", "Stardust", "Tiny Mushroom", "Fire Stone",
-    "Leaf Stone", "Water Stone", "Protein", "Iron", "Calcium", "Zinc", "Carbos", "HP Up",
-)
+BAG_POCKETS = ("Items", "Pokeballs", "TMs", "Berries", "KeyItems")
+BAG_POCKET_LABELS = {
+    "Items": "Items",
+    "Pokeballs": "Poké Balls",
+    "TMs": "TMs",
+    "Berries": "Berries",
+    "KeyItems": "Key Items",
+}
+
+_ITEMS_BY_POCKET: dict[str, tuple[str, ...]] = {
+    "Items": (
+        "Potion", "Super Potion", "Revive", "Antidote", "Awakening", "Burn Heal",
+        "Calcium", "Carbos", "Escape Rope", "Ether", "Everstone", "Full Heal",
+        "Full Restore", "Hard Stone", "Heart Scale", "HP Up", "Ice Heal", "Iron",
+        "Paralyze Heal", "Protein", "Rare Candy", "Repel", "Sea Incense", "Soothe Bell",
+        "Stardust", "Tiny Mushroom", "Water Stone", "Zinc", "Amulet Coin", "Leftovers",
+        "Light Ball", "Miracle Seed", "Quick Claw", "Silk Scarf", "Soft Sand",
+    ),
+    "Pokeballs": (
+        "Pokeball", "Great Ball", "Ultra Ball", "Premier Ball", "Luxury Ball",
+        "Repeat Ball", "Timer Ball", "Cherish Ball", "Shimmer Ball",
+    ),
+    "TMs": tuple(f"TM{number:02d}" for number in (
+        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 16, 17, 19, 24, 26, 29,
+        31, 33, 34, 35, 39, 46, 51, 52,
+    )),
+    "Berries": ("Chesto Berry", "Oran Berry", "Persim Berry", "Sitrus Berry"),
+    "KeyItems": (
+        "Bike", "Coin Case", "DEVON Dividend", "Devon Goods", "Harbor Mail",
+        "Item Finder", "Letter", "Mysterious Flower", "Old Rod", "Powder Jar",
+        "Ticket", "Wailmer Pail",
+    ),
+}
+
+ITEMS_BY_POCKET = {key: tuple(ItemChoice(name, key) for name in values) for key, values in _ITEMS_BY_POCKET.items()}
+ITEM_CHOICES = tuple(item for pocket in BAG_POCKETS for item in ITEMS_BY_POCKET[pocket])
+ITEM_BY_NAME = {item.name.casefold(): item for item in ITEM_CHOICES}
+ITEM_NAMES = ("None",) + tuple(item.name for item in ITEM_CHOICES)
 
 # GE-1.0.0 uses the classic Hoenn regional number for its Seen/Caught integer sets.
 # Only entries that also have a verified Species DataAsset in this build are named here.

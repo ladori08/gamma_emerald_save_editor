@@ -7,7 +7,8 @@
 - Confirmed the old editor targets Pokemon Essentials Ruby Marshal `.rxdata`; its codec cannot be
   reused for Gamma Emerald's Unreal saves.
 - Located Gamma Emerald `GE-1.0.0`, UE `5.6.1`, its encrypted PAK and local `.ged` save directory.
-- Derived known slot filename contract: MD5 of `slot|user_index|ge-vault-2f81c4`.
+- Derived the deterministic slot filename contract; machine-specific identifiers and salts are no
+  longer recorded in continuity files.
 - Reverse engineered the outer save container from the executable and real options save:
   `GES1`, version 1, plaintext length, SHA-1, AES-256-ECB, zero padding, slot string, GVAS length.
 - Verified the codec against the real `GEOptions` save. Discovered the outer slot string differs
@@ -81,9 +82,8 @@ The real fixture passed container integrity and semantic encode/decode round-tri
   story save passed packaged CLI GES1/AES/SHA-1/GVAS/round-trip validation.
 - Located the single Potion entry at `PlayerItems[0].Items[0].Quantity` and changed its quantity
   from 2 to 3 through the same domain validation and write service used by the editor.
-- The write service created timestamped backup
-  `859c7fd1524eb8d6726f1233820531b8.dat.preedit-20260821-233906-624708.bak`, rejected stale/running
-  game states, used temporary-file atomic replacement, and reloaded the final value as 3.
+- The write service created a timestamped pre-edit backup, rejected stale/running game states, used
+  temporary-file atomic replacement, and reloaded the final value as 3.
 - The written live save passed the packaged CLI validation again. Pokemon Gamma Emerald then
   launched successfully; visual load and in-game resave confirmation remain pending.
 - Direct Git CLI publication could not authenticate non-interactively. The authenticated GitHub
@@ -129,3 +129,33 @@ The real fixture passed container integrity and semantic encode/decode round-tri
   ZIP SHA-256: `4AA0A5FD099BDFCE86A5677CA5ABDFFAF6ECA8052D1954A5D2A67431BAB9499F`.
 - Published the sanitized v0.3 source as remote commit `ca26e62` and refreshed draft PR `#1`.
   GitHub's compare lists only the tool's source, tests, packaging and continuity documentation.
+
+## 2026-08-22 — Bag and Pokémon workspace redesign
+
+- User requested Bag pocket tabs, category-filtered item creation/editing, a unified Party/Storage
+  workspace with drag/drop, optional EV-total override, removal of Legality/Advanced from primary
+  navigation, and a species-information Pokédex.
+- Verified that Bag pockets and rows are nested UE5 Array<Struct> payloads, Party is an Array<Struct>,
+  and every Box has 30 fixed PokemonInstanceData structs compatible with Party element payloads.
+- Added structured-array extraction/replacement with count, terminator, parent-size-chain and full
+  reparse verification. Added fixed-struct payload replacement for Box slots.
+- Added five in-game Bag pockets (Items, Poké Balls, TMs, Berries, Key Items), category-filtered
+  item catalogs, Add Item dialog, edit and remove. Missing pockets are inserted in canonical order.
+- Added full Pokémon move/swap operations between Party and any current-Box slot. The complete
+  serialized payload is transferred, preserving species, stats, moves, PP, identity, OT and met data.
+- Replaced the 30-row Storage list with a 5 × 6 card grid, combined it with six Party cards, and
+  wired mouse drag/drop to the verified payload operations.
+- Added an optional toggle allowing total EV above 510 while retaining the per-stat 0–252 limit.
+- Replaced Seen/Caught progress display with a searchable 118-species Gamma catalog showing Hoenn
+  number, primary type, DataAsset path and owned Party/Storage locations. Legality and Advanced were
+  removed from primary navigation; backup restore moved to a toolbar dialog.
+- Real story payload tests added/removed Super Potion, inserted the absent TMs pocket with TM01,
+  moved a complete Pokemon payload Storage → Party, allowed 1,512 total EV, then passed GVAS reparse
+  and GES1 encrypt/decrypt. No live file was written.
+- Automated suite now passes 24 tests. Source GUI assertions verified 4 main tabs, 5 Bag pocket tabs,
+  6 Party cards and 30 Storage cards. Packaged GUI/CLI read-only smoke tests passed while the game
+  was running, so structural live-game verification remains pending.
+- Built local v0.4.0 release. GUI SHA-256:
+  `8394B3EE7B0ABF474D8EBDFD7A521C3C01BF40FF81D7459FC0C83FFBCEA96025`.
+  CLI SHA-256: `6006815577293A2E66BE64C735A6C409405B4D221C4DFEEDD5D832EFA7D6CCA5`.
+  ZIP SHA-256: `D4FEDBAD6A3974512FA2AC06E15C5573D241A5C03FA2670FAF40E1B48A714CF4`.

@@ -6,7 +6,9 @@ import re
 from .errors import GvasError
 from .catalog import (
     AssetChoice,
+    BAG_POCKETS,
     GENDERS,
+    ITEMS_BY_POCKET,
     MET_TYPES,
     MOVES_BY_NAME,
     NATURES,
@@ -18,10 +20,14 @@ from .gvas import (
     GvasDocument,
     PropertyRecord,
     parse_gvas,
+    patch_struct_payload,
+    patch_structured_array,
     patch_int_array,
     patch_scalar,
     patch_soft_object,
     patch_soft_object_array,
+    struct_payload,
+    structured_array_elements,
 )
 
 
@@ -133,7 +139,7 @@ def storage_pokemon(document: GvasDocument, box_index: int) -> list[PokemonView]
     return [
         _pokemon_view(
             document,
-            f"Boxes[{box_index}].Pokemon[{slot}]",
+            storage_slot_path(box_index, slot),
             source="Storage",
             box_index=box_index,
             slot_index=slot,
@@ -151,6 +157,124 @@ def box_names(document: GvasDocument) -> tuple[str, ...]:
         default=-1,
     )
     return tuple(f"Box {index + 1}" for index in range(count))
+
+
+def storage_slot_path(box_index: int, slot_index: int) -> str:
+    if not 0 <= slot_index < 30:
+        raise GvasError("Storage slot must be between 1 and 30.")
+    base = f"Boxes[{box_index}].Pokemon"
+    return base if slot_index == 0 else f"{base}[{slot_index}]"
+
+
+def _storage_view(document: GvasDocument, box_index: int, slot_index: int) -> PokemonView:
+    view = next(
+        (item for item in storage_pokemon(document, box_index) if item.slot_index == slot_index),
+        None,
+    )
+    if view is None:
+        raise GvasError("Storage slot is missing its verified Pokémon struct.")
+    return view
+
+
+def _empty_storage_payload(document: GvasDocument) -> bytes:
+    for box_index in range(len(box_names(document))):
+        for view in storage_pokemon(document, box_index):
+            if not view.occupied:
+                return struct_payload(document, storage_slot_path(box_index, view.slot_index))
+    raise GvasError("No empty verified storage slot is available.")
+
+
+def move_pokemon(
+    document: GvasDocument,
+    *,
+    source_kind: str,
+    source_slot: int,
+    source_box: int | None,
+    target_kind: str,
+    target_slot: int,
+    target_box: int | None,
+) -> bytes:
+    """Move or swap one complete Pokémon payload between Party and fixed Box slots."""
+    if source_kind not in {"party", "storage"} or target_kind not in {"party", "storage"}:
+        raise GvasError("Pokémon location must be Party or Storage.")
+    if (source_kind, source_box, source_slot) == (target_kind, target_box, target_slot):
+        return document.raw
+    party_elements = list(structured_array_elements(document, "Party"))
+    if len(party_elements) > 6:
+        raise GvasError("Party contains more than six verified entries.")
+
+    if source_kind == "party":
+        if not 0 <= source_slot < len(party_elements):
+            raise GvasError("Source Party slot is empty.")
+        source_payload = party_elements[source_slot]
+    else:
+        if source_box is None:
+            raise GvasError("Source Storage box is required.")
+        source_view = _storage_view(document, source_box, source_slot)
+        if not source_view.occupied:
+            raise GvasError("Source Storage slot is empty.")
+        source_payload = struct_payload(document, storage_slot_path(source_box, source_slot))
+
+    target_occupied = False
+    target_payload: bytes | None = None
+    if target_kind == "party":
+        target_occupied = 0 <= target_slot < len(party_elements)
+        if target_occupied:
+            target_payload = party_elements[target_slot]
+        elif target_slot < 0 or target_slot >= 6:
+            raise GvasError("Target Party slot must be between 1 and 6.")
+    else:
+        if target_box is None:
+            raise GvasError("Target Storage box is required.")
+        target_view = _storage_view(document, target_box, target_slot)
+        target_occupied = target_view.occupied
+        target_payload = struct_payload(document, storage_slot_path(target_box, target_slot))
+
+    if source_kind == "party" and target_kind == "party":
+        if target_occupied:
+            party_elements[source_slot], party_elements[target_slot] = (
+                party_elements[target_slot], party_elements[source_slot]
+            )
+        else:
+            party_elements.append(party_elements.pop(source_slot))
+        return patch_structured_array(document, "Party", party_elements)
+
+    if source_kind == "storage" and target_kind == "storage":
+        assert source_box is not None and target_box is not None and target_payload is not None
+        raw = patch_struct_payload(
+            document, storage_slot_path(target_box, target_slot), source_payload
+        )
+        return patch_struct_payload(
+            parse_gvas(raw), storage_slot_path(source_box, source_slot), target_payload
+        )
+
+    if source_kind == "party":
+        assert target_box is not None and target_payload is not None
+        if target_occupied:
+            party_elements[source_slot] = target_payload
+        else:
+            if len(party_elements) == 1:
+                raise GvasError("The last Party Pokémon cannot be moved into an empty Box slot.")
+            party_elements.pop(source_slot)
+        raw = patch_structured_array(document, "Party", party_elements)
+        return patch_struct_payload(
+            parse_gvas(raw), storage_slot_path(target_box, target_slot), source_payload
+        )
+
+    assert source_box is not None
+    if target_occupied:
+        assert target_payload is not None
+        party_elements[target_slot] = source_payload
+        replacement = target_payload
+    else:
+        if len(party_elements) >= 6:
+            raise GvasError("Party is full.")
+        party_elements.append(source_payload)
+        replacement = _empty_storage_payload(document)
+    raw = patch_structured_array(document, "Party", party_elements)
+    return patch_struct_payload(
+        parse_gvas(raw), storage_slot_path(source_box, source_slot), replacement
+    )
 
 
 def bag_entries(document: GvasDocument) -> list[BagEntry]:
@@ -174,6 +298,117 @@ def bag_entries(document: GvasDocument) -> list[BagEntry]:
         )
         for (category, index), fields in sorted(values.items())
     ]
+
+
+def bag_category_indices(document: GvasDocument) -> dict[str, int]:
+    categories: dict[str, int] = {}
+    for item in document.properties:
+        match = re.match(r"^PlayerItems\[(\d+)]\.Category$", item.path)
+        if match:
+            categories[str(item.value).split("::")[-1]] = int(match.group(1))
+    return categories
+
+
+def _validate_bag_choice(pocket: str, item_name: str, quantity: int) -> None:
+    if pocket not in BAG_POCKETS:
+        raise GvasError(f"Unknown Bag pocket {pocket!r}.")
+    allowed = {item.name for item in ITEMS_BY_POCKET[pocket]}
+    if item_name not in allowed:
+        raise GvasError(f"Item {item_name!r} is not catalogued in the {pocket} pocket.")
+    if not 1 <= int(quantity) <= 9999:
+        raise GvasError("Item quantity must be between 1 and 9999.")
+
+
+def _first_bag_item_template(document: GvasDocument) -> bytes:
+    for pocket_index in sorted(bag_category_indices(document).values()):
+        path = f"PlayerItems[{pocket_index}].Items"
+        elements = structured_array_elements(document, path)
+        if elements:
+            return elements[0]
+    raise GvasError("No verified Bag item template exists in this save.")
+
+
+def _ensure_bag_pocket(document: GvasDocument, pocket: str) -> tuple[bytes, int]:
+    indices = bag_category_indices(document)
+    if pocket in indices:
+        return document.raw, indices[pocket]
+    categories = list(structured_array_elements(document, "PlayerItems"))
+    if not categories:
+        raise GvasError("No verified Bag pocket template exists in this save.")
+    order = {name: index for index, name in enumerate(BAG_POCKETS)}
+    indexed_existing = sorted(
+        ((index, name) for name, index in indices.items()), key=lambda item: item[0]
+    )
+    new_index = sum(order.get(name, len(order)) < order[pocket] for _index, name in indexed_existing)
+    categories.insert(new_index, categories[0])
+    raw = patch_structured_array(document, "PlayerItems", categories)
+    current = parse_gvas(raw)
+    raw = patch_scalar(current, f"PlayerItems[{new_index}].Category", f"EItemCategory::{pocket}")
+    current = parse_gvas(raw)
+    raw = patch_structured_array(current, f"PlayerItems[{new_index}].Items", [])
+    return raw, new_index
+
+
+def add_bag_item(document: GvasDocument, pocket: str, item_name: str, quantity: int) -> bytes:
+    _validate_bag_choice(pocket, item_name, quantity)
+    existing = next(
+        (item for item in bag_entries(document) if item.category == pocket and item.name == item_name),
+        None,
+    )
+    if existing:
+        return patch_domain_value(document, existing.prefix + ".Quantity", int(quantity))
+    template = _first_bag_item_template(document)
+    raw, pocket_index = _ensure_bag_pocket(document, pocket)
+    current = parse_gvas(raw)
+    array_path = f"PlayerItems[{pocket_index}].Items"
+    elements = list(structured_array_elements(current, array_path))
+    new_index = len(elements)
+    elements.append(template)
+    raw = patch_structured_array(current, array_path, elements)
+    current = parse_gvas(raw)
+    prefix = f"{array_path}[{new_index}]"
+    return patch_domain_values(
+        current,
+        {
+            prefix + ".ItemName": item_name,
+            prefix + ".ItemID": 0,
+            prefix + ".Quantity": int(quantity),
+        },
+    )
+
+
+def edit_bag_item(document: GvasDocument, entry: BagEntry, item_name: str, quantity: int) -> bytes:
+    _validate_bag_choice(entry.category, item_name, quantity)
+    duplicate = next(
+        (
+            item for item in bag_entries(document)
+            if item.category == entry.category and item.name == item_name and item.prefix != entry.prefix
+        ),
+        None,
+    )
+    if duplicate:
+        raise GvasError(f"{item_name} already exists in this Bag pocket; edit that row instead.")
+    return patch_domain_values(
+        document,
+        {
+            entry.prefix + ".ItemName": item_name,
+            entry.prefix + ".ItemID": 0,
+            entry.prefix + ".Quantity": int(quantity),
+        },
+    )
+
+
+def remove_bag_item(document: GvasDocument, entry: BagEntry) -> bytes:
+    match = _ITEM_RE.match(entry.prefix + ".ItemName")
+    if not match:
+        raise GvasError("Bag item path is not structurally verified.")
+    pocket_index, item_index = int(match.group(1)), int(match.group(2))
+    path = f"PlayerItems[{pocket_index}].Items"
+    elements = list(structured_array_elements(document, path))
+    if not 0 <= item_index < len(elements):
+        raise GvasError("Bag item index is outside its verified array.")
+    elements.pop(item_index)
+    return patch_structured_array(document, path, elements)
 
 
 def legality_issues(document: GvasDocument) -> list[LegalityIssue]:
@@ -368,7 +603,13 @@ def rule_for(path: str) -> str:
     return "fixed-size" if path else ""
 
 
-def validate_domain_value(document: GvasDocument, prop: PropertyRecord, value: object) -> None:
+def validate_domain_value(
+    document: GvasDocument,
+    prop: PropertyRecord,
+    value: object,
+    *,
+    allow_ev_over_510: bool = False,
+) -> None:
     name = prop.path.rsplit(".", 1)[-1]
     if name == "Level" and not 1 <= int(value) <= 100:
         raise GvasError("Level must be between 1 and 100.")
@@ -382,7 +623,7 @@ def validate_domain_value(document: GvasDocument, prop: PropertyRecord, value: o
         for item in document.properties:
             if item.path.startswith(prefix + ".") and item.name.endswith("_EV"):
                 ev_values.append(int(value) if item.path == prop.path else int(item.value))
-        if sum(ev_values) > 510:
+        if sum(ev_values) > 510 and not allow_ev_over_510:
             raise GvasError(f"Total EV would be {sum(ev_values)}; maximum is 510.")
     if name == "Friendship" and not 0 <= int(value) <= 255:
         raise GvasError("Friendship must be between 0 and 255.")
@@ -407,12 +648,18 @@ def validate_domain_value(document: GvasDocument, prop: PropertyRecord, value: o
             raise GvasError(f"{name} is not in the verified GE-1.0.0 enum catalog.")
 
 
-def patch_domain_value(document: GvasDocument, path: str, value: object) -> bytes:
+def patch_domain_value(
+    document: GvasDocument,
+    path: str,
+    value: object,
+    *,
+    allow_ev_over_510: bool = False,
+) -> bytes:
     matches = [item for item in document.properties if item.path == path]
     if len(matches) != 1:
         raise GvasError(f"Expected one domain field at {path!r}, found {len(matches)}.")
     prop = matches[0]
-    validate_domain_value(document, prop, value)
+    validate_domain_value(document, prop, value, allow_ev_over_510=allow_ev_over_510)
     synchronized_paths: list[str] = []
     if path == "PlayerName":
         synchronized_paths = [
@@ -433,7 +680,12 @@ def patch_domain_value(document: GvasDocument, path: str, value: object) -> byte
     return raw
 
 
-def patch_domain_values(document: GvasDocument, changes: dict[str, object]) -> bytes:
+def patch_domain_values(
+    document: GvasDocument,
+    changes: dict[str, object],
+    *,
+    allow_ev_over_510: bool = False,
+) -> bytes:
     raw = document.raw
     by_path = {item.path: item for item in document.properties}
     ordered = list(changes.items())
@@ -448,7 +700,7 @@ def patch_domain_values(document: GvasDocument, changes: dict[str, object]) -> b
     )
     for path, value in ordered:
         current = parse_gvas(raw)
-        raw = patch_domain_value(current, path, value)
+        raw = patch_domain_value(current, path, value, allow_ev_over_510=allow_ev_over_510)
     return raw
 
 
@@ -461,6 +713,7 @@ def patch_pokemon(
     moves: list[AssetChoice] | None = None,
     current_pp: list[int] | None = None,
     max_pp: list[int] | None = None,
+    allow_ev_over_510: bool = False,
 ) -> bytes:
     if not pokemon.occupied:
         raise GvasError("Empty Pokémon slots cannot be created until struct insertion is verified.")
@@ -486,7 +739,12 @@ def patch_pokemon(
     )
     for field, value in scalar_items:
         current = parse_gvas(raw)
-        raw = patch_domain_value(current, pokemon.prefix + "." + field, value)
+        raw = patch_domain_value(
+            current,
+            pokemon.prefix + "." + field,
+            value,
+            allow_ev_over_510=allow_ev_over_510,
+        )
     if moves is not None:
         if len(moves) > 4:
             raise GvasError("A Pokémon can have at most four moves.")
