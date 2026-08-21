@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import re
+import struct
 
 from .errors import GvasError
 from .catalog import (
@@ -12,6 +13,7 @@ from .catalog import (
     MET_TYPES,
     MOVES_BY_NAME,
     NATURES,
+    SPECIES_INFO,
     SPECIES_BY_NAME,
     STATUS_CONDITIONS,
     display_name,
@@ -22,6 +24,7 @@ from .gvas import (
     parse_gvas,
     patch_struct_payload,
     patch_structured_array,
+    patch_property_batch,
     patch_int_array,
     patch_scalar,
     patch_fixed_scalars,
@@ -185,7 +188,7 @@ def _empty_storage_payload(document: GvasDocument) -> bytes:
     raise GvasError("No empty verified storage slot is available.")
 
 
-def pokemon_creation_defaults(document: GvasDocument) -> dict[str, object]:
+def pokemon_creation_defaults(document: GvasDocument, species_name: str | None = None) -> dict[str, object]:
     """Return conservative values for activating a verified empty Pokemon struct."""
     trainer_name = next(
         (str(item.value) for item in document.properties if item.path == "PlayerName"),
@@ -195,17 +198,15 @@ def pokemon_creation_defaults(document: GvasDocument) -> dict[str, object]:
         (int(item.value) for item in document.properties if item.path == "PlayerId"),
         0,
     )
+    # One property pass is materially faster than rebuilding every Box view merely
+    # to collect IDs; retaining IDs from empty templates is conservative and safe.
     used_ids = {
-        int(view.fields.get("PokemonID", 0))
-        for view in party_pokemon(document)
-        if view.occupied
+        int(item.value)
+        for item in document.properties
+        if item.name == "PokemonID"
+        and (item.path.startswith("Party[") or item.path.startswith("Boxes["))
+        and int(item.value) > 0
     }
-    for box_index in range(len(box_names(document))):
-        used_ids.update(
-            int(view.fields.get("PokemonID", 0))
-            for view in storage_pokemon(document, box_index)
-            if view.occupied
-        )
     pokemon_id = max(used_ids, default=0) + 1
     if pokemon_id > 2_147_483_647:
         pokemon_id = next(
@@ -223,6 +224,7 @@ def pokemon_creation_defaults(document: GvasDocument) -> dict[str, object]:
         "MaxHP": 1.0,
         "Nature": "ENature::Hardy",
         "Gender": "EPokemonGender::Genderless",
+        "Ability": "EPokemonAbility::None",
         "AbilitySlot": 0,
         "HeldItem": "None",
         "Friendship": 70,
@@ -250,10 +252,15 @@ def pokemon_creation_defaults(document: GvasDocument) -> dict[str, object]:
     for stat in ("HP", "Attack", "Defense", "SpecialAttack", "SpecialDefense", "Speed"):
         defaults[stat + "_IV"] = 0
         defaults[stat + "_EV"] = 0
+    info = SPECIES_INFO.get((species_name or "").casefold())
+    if info and info.abilities:
+        ability = info.abilities[0]
+        defaults["Ability"] = f"EPokemonAbility::{ability.enum_name}"
+        defaults["AbilitySlot"] = ability.slot
     return defaults
 
 
-def create_pokemon(
+def _create_pokemon_legacy(
     document: GvasDocument,
     pokemon: PokemonView,
     *,
@@ -353,6 +360,65 @@ def create_pokemon(
     return raw
 
 
+def create_pokemon(
+    document: GvasDocument,
+    pokemon: PokemonView,
+    *,
+    species: AssetChoice,
+    scalar_changes: dict[str, object] | None = None,
+    moves: list[AssetChoice] | None = None,
+    current_pp: list[int] | None = None,
+    max_pp: list[int] | None = None,
+    allow_ev_over_510: bool = False,
+) -> bytes:
+    """Create a Pokémon with one batch edit (Storage) or one prepared template (Party)."""
+    if pokemon.occupied:
+        raise GvasError("The selected Pokemon slot is already occupied.")
+    if SPECIES_BY_NAME.get(species.name.casefold()) != species:
+        raise GvasError("Species is not in the verified GE-1.0.0 catalog.")
+    requested = pokemon_creation_defaults(document, species.name)
+    requested.update(scalar_changes or {})
+
+    def fill_template(template: PokemonView) -> bytes:
+        available = {
+            item.name for item in document.properties
+            if item.path.startswith(template.prefix + ".")
+        }
+        unknown = sorted(set(requested) - available)
+        if unknown:
+            raise GvasError("Pokemon template is missing verified fields: " + ", ".join(unknown))
+        return patch_pokemon(
+            document, template, scalar_changes=requested, species=species,
+            moves=moves, current_pp=current_pp, max_pp=max_pp,
+            allow_ev_over_510=allow_ev_over_510, _allow_empty_template=True,
+        )
+
+    if pokemon.source == "Storage":
+        if pokemon.box_index is None:
+            raise GvasError("Storage box is required for Pokemon creation.")
+        current = _storage_view(document, pokemon.box_index, pokemon.slot_index)
+        if current.occupied:
+            raise GvasError("The selected Storage slot is already occupied.")
+        return fill_template(current)
+    if pokemon.source != "Party":
+        raise GvasError("Pokemon creation target must be Party or Storage.")
+
+    elements = list(structured_array_elements(document, "Party"))
+    if len(elements) >= 6:
+        raise GvasError("Party is full.")
+    template: PokemonView | None = None
+    for box_index in range(len(box_names(document))):
+        template = next((view for view in storage_pokemon(document, box_index) if not view.occupied), None)
+        if template is not None:
+            break
+    if template is None:
+        raise GvasError("No empty verified storage template is available.")
+    prepared = parse_gvas(fill_template(template))
+    elements.append(struct_payload(prepared, template.prefix))
+    encoded = struct.pack("<I", len(elements)) + b"".join(elements)
+    return patch_property_batch(document, payload_changes={"Party": encoded})
+
+
 def move_pokemon(
     document: GvasDocument,
     *,
@@ -406,15 +472,17 @@ def move_pokemon(
             )
         else:
             party_elements.append(party_elements.pop(source_slot))
-        return patch_structured_array(document, "Party", party_elements)
+        encoded = struct.pack("<I", len(party_elements)) + b"".join(party_elements)
+        return patch_property_batch(document, payload_changes={"Party": encoded})
 
     if source_kind == "storage" and target_kind == "storage":
         assert source_box is not None and target_box is not None and target_payload is not None
-        raw = patch_struct_payload(
-            document, storage_slot_path(target_box, target_slot), source_payload
-        )
-        return patch_struct_payload(
-            parse_gvas(raw), storage_slot_path(source_box, source_slot), target_payload
+        return patch_property_batch(
+            document,
+            payload_changes={
+                storage_slot_path(target_box, target_slot): source_payload,
+                storage_slot_path(source_box, source_slot): target_payload,
+            },
         )
 
     if source_kind == "party":
@@ -425,9 +493,10 @@ def move_pokemon(
             if len(party_elements) == 1:
                 raise GvasError("The last Party Pokémon cannot be moved into an empty Box slot.")
             party_elements.pop(source_slot)
-        raw = patch_structured_array(document, "Party", party_elements)
-        return patch_struct_payload(
-            parse_gvas(raw), storage_slot_path(target_box, target_slot), source_payload
+        encoded = struct.pack("<I", len(party_elements)) + b"".join(party_elements)
+        return patch_property_batch(
+            document,
+            payload_changes={"Party": encoded, storage_slot_path(target_box, target_slot): source_payload},
         )
 
     assert source_box is not None
@@ -440,9 +509,10 @@ def move_pokemon(
             raise GvasError("Party is full.")
         party_elements.append(source_payload)
         replacement = _empty_storage_payload(document)
-    raw = patch_structured_array(document, "Party", party_elements)
-    return patch_struct_payload(
-        parse_gvas(raw), storage_slot_path(source_box, source_slot), replacement
+    encoded = struct.pack("<I", len(party_elements)) + b"".join(party_elements)
+    return patch_property_batch(
+        document,
+        payload_changes={"Party": encoded, storage_slot_path(source_box, source_slot): replacement},
     )
 
 
@@ -873,7 +943,7 @@ def patch_domain_values(
     return raw
 
 
-def patch_pokemon(
+def _patch_pokemon_legacy(
     document: GvasDocument,
     pokemon: PokemonView,
     *,
@@ -972,3 +1042,84 @@ def patch_pokemon(
         raw = patch_int_array(parse_gvas(raw), pokemon.prefix + ".CurrentPP", current_pp)
         raw = patch_int_array(parse_gvas(raw), pokemon.prefix + ".MaxPP", max_pp)
     return raw
+
+
+def patch_pokemon(
+    document: GvasDocument,
+    pokemon: PokemonView,
+    *,
+    scalar_changes: dict[str, object],
+    species: AssetChoice | None = None,
+    moves: list[AssetChoice] | None = None,
+    current_pp: list[int] | None = None,
+    max_pp: list[int] | None = None,
+    allow_ev_over_510: bool = False,
+    _allow_empty_template: bool = False,
+) -> bytes:
+    """Patch one Pokémon as a single verified serialization transaction."""
+    if not pokemon.occupied and not _allow_empty_template:
+        raise GvasError("Use create_pokemon() to activate a verified empty Pokemon slot.")
+    by_path = {item.path: item for item in document.properties}
+    ev_changes = {field: int(value) for field, value in scalar_changes.items() if field.endswith("_EV")}
+    if ev_changes and not allow_ev_over_510:
+        final_total = sum(
+            ev_changes.get(item.name, int(item.value))
+            for item in document.properties
+            if item.path.startswith(pokemon.prefix + ".") and item.name.endswith("_EV")
+        )
+        if final_total > 510:
+            raise GvasError(f"Total EV would be {final_total}; maximum is 510.")
+
+    effective_species = species.name if species is not None else pokemon.species
+    info = SPECIES_INFO.get(effective_species.casefold())
+    if info and (species is not None or "Ability" in scalar_changes or "AbilitySlot" in scalar_changes):
+        ability_leaf = str(scalar_changes.get("Ability", pokemon.fields.get("Ability", "None"))).split("::")[-1]
+        ability_slot = int(scalar_changes.get("AbilitySlot", pokemon.fields.get("AbilitySlot", 0)))
+        choice = next((item for item in info.abilities if item.enum_name.casefold() == ability_leaf.casefold()), None)
+        if choice is None or choice.slot != ability_slot:
+            raise GvasError(f"Ability {ability_leaf!r} is not valid for {effective_species} in the selected slot.")
+
+    scalar_paths: dict[str, object] = {}
+    for field, value in scalar_changes.items():
+        path = pokemon.prefix + "." + field
+        prop = by_path.get(path)
+        if prop is None:
+            raise GvasError(f"Expected one Pokemon field at {path!r}.")
+        validate_domain_value(
+            document, prop, value,
+            allow_ev_over_510=True if field.endswith("_EV") else allow_ev_over_510,
+        )
+        scalar_paths[path] = value
+
+    move_paths: dict[str, list[tuple[str, str]]] = {}
+    int_paths: dict[str, list[int]] = {}
+    if moves is not None:
+        if len(moves) > 4:
+            raise GvasError("A Pokemon can have at most four moves.")
+        move_paths[pokemon.prefix + ".Moves"] = [(move.path, move.object_name) for move in moves]
+        if current_pp is None or max_pp is None:
+            raise GvasError("Move edits require matching Current PP and Max PP arrays.")
+    if current_pp is not None or max_pp is not None:
+        if current_pp is None or max_pp is None or len(current_pp) != len(max_pp):
+            raise GvasError("Current PP and Max PP must have the same length.")
+        if moves is not None and len(current_pp) != len(moves):
+            raise GvasError("Move and PP arrays must have the same length.")
+        if not all(0 <= int(value) <= 99 for value in (*current_pp, *max_pp)):
+            raise GvasError("PP values must be between 0 and 99.")
+        if any(int(current) > int(maximum) for current, maximum in zip(current_pp, max_pp)):
+            raise GvasError("Current PP cannot exceed Max PP.")
+        int_paths[pokemon.prefix + ".CurrentPP"] = [int(value) for value in current_pp]
+        int_paths[pokemon.prefix + ".MaxPP"] = [int(value) for value in max_pp]
+
+    soft_paths = ({pokemon.prefix + ".SpeciesData": (species.path, species.object_name)} if species else {})
+    allow_readonly = set()
+    if _allow_empty_template:
+        allow_readonly.update((*scalar_paths, *soft_paths, *move_paths, *int_paths))
+    return patch_property_batch(
+        document,
+        scalar_changes=scalar_paths,
+        soft_object_changes=soft_paths,
+        soft_object_array_changes=move_paths,
+        int_array_changes=int_paths,
+        allow_readonly_paths=allow_readonly,
+    )

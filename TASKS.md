@@ -37,6 +37,11 @@ Status legend: `[x]` verified, `[~]` implemented/awaiting final verification, `[
 - [x] Merge Party and Storage into a drag/drop Pokémon card workspace.
 - [x] Replace Seen/Caught progress UI with a Gamma Pokémon information Pokédex.
 - [x] Add optional EV-total >510 override while keeping each EV capped at 252.
+- [x] Filter Ability by Species, mark Hidden Abilities and synchronize Ability Slot.
+- [x] Annotate all Nature choices with raised/lowered stats.
+- [x] Restrict Held Item choices to hold/Fling-compatible item groups.
+- [x] Expand Pokédex with Abilities, base stats and incoming type defenses.
+- [x] Batch Pokémon edit/create/move serialization to remove multi-reparse UI stalls.
 - [ ] Add Gamma-verified team-builder, damage-calculator and custom-item workflows.
 
 ## Verification and delivery
@@ -44,6 +49,6 @@ Status legend: `[x]` verified, `[~]` implemented/awaiting final verification, `[
 - [x] Complete automated unit tests and real-options-save read-only test.
 - [x] Verify story-save edit -> game load -> resave cycle.
 - [x] Build Windows executable and smoke-test it.
-- [x] Package and smoke-test the tool-only v0.5.0 local release against the real story save.
+- [x] Package and smoke-test the tool-only v0.6.0 local release against the real story save.
 - [x] Publish a sanitized clean history with external key provisioning and draft PR.
 - [ ] Tag the first verified release.

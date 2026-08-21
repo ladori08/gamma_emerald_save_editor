@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from gamma_editor.domain import legality_issues, pokemon_creation_defaults, validate_domain_value
+from gamma_editor.catalog import HOLDABLE_ITEM_NAMES, NATURE_LABELS, SPECIES_INFO
 from gamma_editor.errors import GvasError
 from gamma_editor.gvas import GvasDocument, PropertyRecord
 
@@ -100,3 +101,13 @@ def test_creation_defaults_use_trainer_and_unique_pokemon_id() -> None:
     assert defaults["PokemonID"] == 801
     assert defaults["Level"] == 5
     assert defaults["MaxHP"] == 1.0
+
+
+def test_species_metadata_filters_abilities_natures_and_holdable_items() -> None:
+    torchic = SPECIES_INFO["torchic"]
+    assert [item.label for item in torchic.abilities] == ["Blaze", "Speed Boost (H)"]
+    assert [item.slot for item in torchic.abilities] == [0, 2]
+    assert "Adamant (+Atk / -SpAtk)" in NATURE_LABELS
+    assert "Leftovers" in HOLDABLE_ITEM_NAMES
+    assert "Pokeball" not in HOLDABLE_ITEM_NAMES
+    assert "Bike" not in HOLDABLE_ITEM_NAMES

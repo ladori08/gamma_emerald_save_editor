@@ -6,15 +6,15 @@ Last updated: 2026-08-22
 
 1. Story/Quest/Berry/Options all exist and validate. Private unpacked fixtures under
    `samples/private` are ignored and must never be committed.
-2. Current parser baseline: more than 22,000 story records, no parser error; 26 automated tests.
-3. Current branch is `feat/story-save-schema`; v0.5 empty-slot creation is committed locally and
-   published on the existing draft PR.
+2. Current parser baseline: 22,482 story records, no parser error; 28 automated tests.
+3. Current branch is `feat/story-save-schema`; v0.6 species-aware editor changes are implemented
+   and awaiting the sanitized source-only publication step on the existing draft PR.
 4. Repository `ladori08/gamma_emerald_save_editor` is public, and the user explicitly approved
    public publication on 2026-08-21.
 5. Publish the initial main history, publish the feature branch, and use a draft PR unless the user
    explicitly requests otherwise.
-6. Local v0.5.0 is built under `release`; packaged GUI/CLI pass read-only validation against the
-   story save. No v0.5 structural live write was attempted.
+6. Local v0.6.0 is built under `release`; packaged GUI/CLI pass smoke/read-only validation against
+   the story save. No v0.6 structural live write was attempted.
 7. The first controlled live write changed Potion quantity 2 -> 3 and passed backup, atomic-write,
    visual game load, normal in-game resave, 22,479-record reparse and packaged CLI validation.
 8. Public source uses external key provisioning via `GAMMA_EMERALD_SAVE_KEY_HEX` or ignored
@@ -33,6 +33,11 @@ Last updated: 2026-08-22
     encode/decode pass in memory; controlled live-game load/resave remains pending.
 13. Sanitized v0.5 feature source is published as remote commit `ee750bb`. Its compare against the
     prior remote head contains exactly 13 source, test and continuity files and no artifacts.
+14. v0.6 adds metadata for 116 standard Gamma species, Species-filtered Ability choices with `(H)`
+    markers, annotated Nature labels, holdable-only Held Item choices, and detailed Pokédex stats/
+    abilities/type defenses. Gecqua and MissingNo. are intentionally unmapped.
+15. One-pass property transactions reduce real-story operations to about 0.78 s edit, 0.94 s Box
+    creation, 2.49 s Party creation and 1.03 s drag/drop. The v0.6 tool-only ZIP contains no key.
 
 ## Local identifiers
 

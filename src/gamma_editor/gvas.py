@@ -622,6 +622,165 @@ def _replace_property_payload(
     return rebuilt
 
 
+def patch_property_batch(
+    document: GvasDocument,
+    *,
+    scalar_changes: dict[str, object] | None = None,
+    soft_object_changes: dict[str, tuple[str, str]] | None = None,
+    int_array_changes: dict[str, list[int] | tuple[int, ...]] | None = None,
+    soft_object_array_changes: dict[str, list[tuple[str, str]] | tuple[tuple[str, str], ...]] | None = None,
+    payload_changes: dict[str, bytes] | None = None,
+    allow_readonly_paths: set[str] | None = None,
+) -> bytes:
+    """Apply independent verified property edits with one resize pass and one reparse."""
+    scalar_changes = scalar_changes or {}
+    soft_object_changes = soft_object_changes or {}
+    int_array_changes = int_array_changes or {}
+    soft_object_array_changes = soft_object_array_changes or {}
+    payload_changes = payload_changes or {}
+    allow_readonly_paths = allow_readonly_paths or set()
+    all_paths = [
+        *scalar_changes, *soft_object_changes, *int_array_changes,
+        *soft_object_array_changes, *payload_changes,
+    ]
+    if len(all_paths) != len(set(all_paths)):
+        raise GvasError("A property cannot be edited twice in the same transaction.")
+    for path in all_paths:
+        if any(other != path and other.startswith(path + ".") for other in all_paths):
+            raise GvasError("A transaction cannot replace both a property and one of its children.")
+
+    by_path: dict[str, PropertyRecord] = {}
+    for item in document.properties:
+        if item.path in all_paths:
+            if item.path in by_path:
+                raise GvasError(f"Expected one property at {item.path!r}.")
+            by_path[item.path] = item
+    missing = sorted(set(all_paths) - set(by_path))
+    if missing:
+        raise GvasError("Missing property path(s): " + ", ".join(missing))
+
+    replacements: list[tuple[PropertyRecord, bytes]] = []
+    bool_changes: list[tuple[PropertyRecord, bool]] = []
+
+    for path, value in scalar_changes.items():
+        prop = by_path[path]
+        if not prop.editable and path not in allow_readonly_paths:
+            raise GvasError(f"Property {path!r} is not safely editable.")
+        if prop.type_name == "BoolProperty":
+            if prop.bool_value_offset is None:
+                raise GvasError(f"Bool property {path!r} is missing its verified header offset.")
+            bool_changes.append((prop, bool(value)))
+            continue
+        fmt = _SCALAR_FORMATS.get(prop.type_name)
+        if fmt is not None:
+            try:
+                encoded = struct.pack(fmt, value)
+            except (struct.error, TypeError, ValueError) as exc:
+                raise GvasError(f"Invalid value for {prop.type_name}: {value!r}.") from exc
+            if len(encoded) != prop.value_size:
+                raise GvasError(f"Scalar encoded size changed unexpectedly for {path!r}.")
+        elif prop.type_name in {"StrProperty", "NameProperty", "ObjectProperty", "EnumProperty"}:
+            if not isinstance(value, str):
+                raise GvasError(f"String property {path!r} requires a string value.")
+            encoded = _encode_fstring(value)
+        else:
+            raise GvasError(f"Unsupported scalar type {prop.type_name} at {path!r}.")
+        replacements.append((prop, encoded))
+
+    for path, (asset_path, object_name) in soft_object_changes.items():
+        prop = by_path[path]
+        if prop.type_name != "SoftObjectProperty":
+            raise GvasError(f"Property {path!r} is not a SoftObjectProperty.")
+        if not prop.editable and path not in allow_readonly_paths:
+            raise GvasError(f"Property {path!r} is not safely editable.")
+        reader = _Reader(document.raw[prop.value_offset : prop.end_offset])
+        try:
+            reader.fstring(limit=65536)
+            reader.fstring(limit=65536)
+            trailing: list[str] = []
+            while reader.remaining():
+                trailing.append(reader.fstring(limit=65536))
+        except (GvasError, UnicodeError) as exc:
+            raise GvasError(f"Soft object at {path!r} has an unverified payload.") from exc
+        encoded = _encode_fstring(asset_path) + _encode_fstring(object_name)
+        encoded += b"".join(_encode_fstring(item) for item in trailing)
+        replacements.append((prop, encoded))
+
+    for path, values in int_array_changes.items():
+        prop = by_path[path]
+        if prop.type_name != "ArrayProperty" or "IntProperty" not in prop.type_descriptor:
+            raise GvasError(f"Array at {path!r} is not an integer array.")
+        if len(values) > 100_000:
+            raise GvasError("Integer array exceeds the safety limit.")
+        encoded = struct.pack("<I", len(values)) + b"".join(struct.pack("<i", int(item)) for item in values)
+        replacements.append((prop, encoded))
+
+    for path, values in soft_object_array_changes.items():
+        prop = by_path[path]
+        if prop.type_name != "ArrayProperty" or "SoftObjectProperty" not in prop.type_descriptor:
+            raise GvasError(f"Array at {path!r} is not a soft-object array.")
+        if len(values) > 1024:
+            raise GvasError("Soft-object array exceeds the safety limit.")
+        encoded = bytearray(struct.pack("<I", len(values)))
+        for asset_path, object_name in values:
+            encoded.extend(_encode_fstring(asset_path))
+            encoded.extend(_encode_fstring(object_name))
+            encoded.extend(_encode_fstring(""))
+        replacements.append((prop, bytes(encoded)))
+
+    for path, encoded in payload_changes.items():
+        prop = by_path[path]
+        if prop.type_name not in {"ArrayProperty", "StructProperty"}:
+            raise GvasError(f"Raw payload replacement is not allowed for {prop.type_name}.")
+        replacements.append((prop, encoded))
+
+    data = bytearray(document.raw)
+    size_deltas: dict[int, tuple[PropertyRecord, int]] = {}
+    for prop, encoded in replacements:
+        delta = len(encoded) - prop.value_size
+        if not delta:
+            continue
+        if not document.header.header_extension or prop.size_offset is None or prop.size_width != 4:
+            raise GvasError("Variable-size edits require a verified UE5.6 property-size chain.")
+        for target_path in (prop.path, *prop.ancestor_paths):
+            target = by_path.get(target_path)
+            if target is None:
+                matches = [item for item in document.properties if item.path == target_path]
+                if len(matches) != 1:
+                    raise GvasError(f"Cannot verify parent size field for {target_path!r}.")
+                target = matches[0]
+            if target.size_offset is None or target.size_width != 4:
+                raise GvasError(f"Cannot verify parent size field for {target_path!r}.")
+            old = size_deltas.get(target.size_offset, (target, 0))
+            size_deltas[target.size_offset] = (target, old[1] + delta)
+    for size_offset, (target, delta) in size_deltas.items():
+        new_size = target.size + delta
+        if not 0 <= new_size <= 0xFFFFFFFF:
+            raise GvasError(f"Resized property {target.path!r} exceeds uint32 limits.")
+        struct.pack_into("<I", data, size_offset, new_size)
+    for prop, value in bool_changes:
+        assert prop.bool_value_offset is not None
+        if prop.size == 0:
+            if value:
+                data[prop.bool_value_offset] |= 0x10
+            else:
+                data[prop.bool_value_offset] &= ~0x10
+        else:
+            data[prop.bool_value_offset] = 1 if value else 0
+    for prop, encoded in sorted(replacements, key=lambda item: item[0].value_offset, reverse=True):
+        data[prop.value_offset : prop.end_offset] = encoded
+
+    rebuilt = bytes(data)
+    verified = parse_gvas(rebuilt)
+    if verified.property_error:
+        raise GvasError(f"Batch edit failed structural verification: {verified.property_error}")
+    verified_paths = {item.path for item in verified.properties}
+    lost = sorted(set(all_paths) - verified_paths)
+    if lost:
+        raise GvasError("Batch edit lost property path(s): " + ", ".join(lost))
+    return rebuilt
+
+
 def patch_scalar(document: GvasDocument, property_name: str, value: object) -> bytes:
     matches = [p for p in document.properties if p.path == property_name]
     if not matches:

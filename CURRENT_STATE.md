@@ -13,7 +13,7 @@ Last updated: 2026-08-22
 - GUI, CLI, guarded write/backup service, diagnostics and schema-aware editor implemented.
 - Story GVAS recursively parses more than 22,000 tagged records with no parser error, including
   Party, 14 boxes, Daycare, Bag, Seen/Caught and progress fields.
-- The v0.5 consumer GUI has four focused tabs: Trainer, Pokémon, Bag and Pokédex. Party and Storage
+- The v0.6 consumer GUI has four focused tabs: Trainer, Pokémon, Bag and Pokédex. Party and Storage
   share one workspace with six Party cards, a compact 5 × 6 Box grid and complete-payload drag/drop.
 - Empty Party and Storage cards now open a Create Pokemon form. Creation activates the game's
   complete verified empty struct template, assigns a collision-free Pokemon ID and current Trainer
@@ -23,10 +23,16 @@ Last updated: 2026-08-22
 - Bundled tool-only catalogs contain 118 Gamma species paths and 99 move paths. Species, nature,
   gender, status, met type, moves and PP are selected from validated controls; no game asset is
   copied into the repository or release.
-- Pokédex is now a Gamma species-information lookup rather than a Seen/Caught progress report.
-- Automated suite passes: 26 tests plus real-story in-memory Bag insertion/removal, Party/Storage
+- Species-aware metadata covers 116 standard Gamma species. Ability is filtered per species with
+  `(H)` Hidden Ability labels and synchronized slots; Nature labels show stat effects. Gecqua and
+  MissingNo. remain explicitly game-specific/unmapped rather than receiving fabricated metadata.
+- Held Item choices use the verified hold/Fling item groups and exclude Poké Balls and Key Items.
+- Pokédex now shows types, Abilities, height/weight, base stats and all 18 incoming type multipliers.
+- Pokémon edit/create/move uses a one-pass property transaction. Real-story timings measured about
+  0.78 s edit, 0.94 s Storage create, 2.49 s Party create and 1.03 s Storage-to-Party move.
+- Automated suite passes: 28 tests plus real-story in-memory Bag insertion/removal, Party/Storage
   payload movement, empty-slot creation, EV-limit override and encrypt/decrypt verification.
-- Packaged v0.5 GUI and CLI both pass read-only validation against the real story save.
+- Packaged v0.6 GUI and CLI both pass smoke/read-only validation against the real story save.
 - Local git repository initialized on `main`; initial implementation commit is `39bbe27`.
 - GitHub repository `ladori08/gamma_emerald_save_editor` exists and admin/push access is verified.
   The user explicitly approved publishing it as a public repository on 2026-08-21.
@@ -39,8 +45,8 @@ Last updated: 2026-08-22
 - The Indigo-style implementation is committed locally on `feat/story-save-schema` as `8f0d7bf`;
   `origin` points to the dedicated GitHub repository.
 - Sanitized v0.4 feature source is published on the same draft PR as remote commit `3e8c2b7`.
-- Sanitized v0.5 empty-slot creation source is published on draft PR `#1` as remote commit
-  `ee750bb`; the one-commit compare contains exactly 13 source, test and continuity files.
+- Sanitized v0.5 source and publication notes are on draft PR `#1`; its current remote head before
+  v0.6 publication is `85c1b214891415db7d57f0e9d535ab8dd24c5b3a`.
 
 ## Safety status
 
@@ -59,4 +65,4 @@ the public repository stays tool-only. Unsupported structures remain read-only.
 
 ## Next verified milestone
 
-Live-test one newly created Pokémon with game load and normal in-game resave before tagging v0.5.
+Live-test one newly created Pokémon with game load and normal in-game resave before tagging a release.

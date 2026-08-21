@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 import re
 
+from .species_metadata import SPECIES_METADATA_RAW
+
 
 @dataclass(slots=True, frozen=True)
 class AssetChoice:
@@ -16,6 +18,28 @@ class AssetChoice:
 class ItemChoice:
     name: str
     pocket: str
+
+
+@dataclass(slots=True, frozen=True)
+class AbilityChoice:
+    name: str
+    enum_name: str
+    slot: int
+    hidden: bool = False
+
+    @property
+    def label(self) -> str:
+        return f"{self.name} (H)" if self.hidden else self.name
+
+
+@dataclass(slots=True, frozen=True)
+class SpeciesInfo:
+    name: str
+    types: tuple[str, ...]
+    base_stats: dict[str, int]
+    abilities: tuple[AbilityChoice, ...]
+    height_m: float
+    weight_kg: float
 
 
 def display_name(token: str) -> str:
@@ -281,6 +305,28 @@ NATURES = (
     "Calm", "Gentle", "Sassy", "Careful", "Quirky",
 )
 
+NATURE_EFFECTS: dict[str, tuple[str | None, str | None]] = {
+    "Hardy": (None, None), "Lonely": ("Atk", "Def"), "Brave": ("Atk", "Spe"),
+    "Adamant": ("Atk", "SpAtk"), "Naughty": ("Atk", "SpDef"),
+    "Bold": ("Def", "Atk"), "Docile": (None, None), "Relaxed": ("Def", "Spe"),
+    "Impish": ("Def", "SpAtk"), "Lax": ("Def", "SpDef"),
+    "Timid": ("Spe", "Atk"), "Hasty": ("Spe", "Def"), "Serious": (None, None),
+    "Jolly": ("Spe", "SpAtk"), "Naive": ("Spe", "SpDef"),
+    "Modest": ("SpAtk", "Atk"), "Mild": ("SpAtk", "Def"), "Quiet": ("SpAtk", "Spe"),
+    "Bashful": (None, None), "Rash": ("SpAtk", "SpDef"),
+    "Calm": ("SpDef", "Atk"), "Gentle": ("SpDef", "Def"), "Sassy": ("SpDef", "Spe"),
+    "Careful": ("SpDef", "SpAtk"), "Quirky": (None, None),
+}
+
+
+def nature_label(name: str) -> str:
+    raised, lowered = NATURE_EFFECTS[name]
+    return f"{name} (Neutral)" if raised is None else f"{name} (+{raised} / -{lowered})"
+
+
+NATURE_LABELS = tuple(nature_label(name) for name in NATURES)
+NATURE_BY_LABEL = {label.casefold(): name for name, label in zip(NATURES, NATURE_LABELS)}
+
 GENDERS = ("Male", "Female", "Genderless")
 STATUS_CONDITIONS = ("None", "Sleep", "Poison", "Burn", "Paralysis", "Freeze", "BadlyPoisoned")
 MET_TYPES = ("Caught", "Gift", "Egg", "Traded", "FatefulEncounter")
@@ -323,6 +369,10 @@ ITEMS_BY_POCKET = {key: tuple(ItemChoice(name, key) for name in values) for key,
 ITEM_CHOICES = tuple(item for pocket in BAG_POCKETS for item in ITEMS_BY_POCKET[pocket])
 ITEM_BY_NAME = {item.name.casefold(): item for item in ITEM_CHOICES}
 ITEM_NAMES = ("None",) + tuple(item.name for item in ITEM_CHOICES)
+HOLDABLE_ITEM_NAMES = (
+    "None",
+    *(item.name for pocket in ("Items", "TMs", "Berries") for item in ITEMS_BY_POCKET[pocket]),
+)
 
 # GE-1.0.0 uses the classic Hoenn regional number for its Seen/Caught integer sets.
 # Only entries that also have a verified Species DataAsset in this build are named here.
@@ -344,3 +394,70 @@ HOENN_DEX = {
     99: "Milotic", 122: "Salamence", 123: "Beldum", 124: "Metang", 125: "Metagross",
     129: "Latias", 133: "Rayquaza", 134: "Jirachi",
 }
+
+
+SPECIES_INFO: dict[str, SpeciesInfo] = {}
+for _species_name, _raw in SPECIES_METADATA_RAW.items():
+    SPECIES_INFO[_species_name.casefold()] = SpeciesInfo(
+        name=_species_name,
+        types=tuple(_raw["types"]),
+        base_stats={name: int(value) for name, value in _raw["base_stats"].items()},
+        abilities=tuple(
+            AbilityChoice(
+                name=item["name"], enum_name=item["enum"], slot=int(item["slot"]),
+                hidden=bool(item["hidden"]),
+            )
+            for item in _raw["abilities"]
+        ),
+        height_m=float(_raw["height_m"]),
+        weight_kg=float(_raw["weight_kg"]),
+    )
+
+
+TYPE_ORDER = (
+    "Normal", "Fire", "Water", "Electric", "Grass", "Ice", "Fighting", "Poison",
+    "Ground", "Flying", "Psychic", "Bug", "Rock", "Ghost", "Dragon", "Dark", "Steel", "Fairy",
+)
+TYPE_COLORS = {
+    "Normal": "#a8a878", "Fire": "#f08030", "Water": "#6890f0", "Electric": "#f8d030",
+    "Grass": "#78c850", "Ice": "#98d8d8", "Fighting": "#c03028", "Poison": "#a040a0",
+    "Ground": "#e0c068", "Flying": "#a890f0", "Psychic": "#f85888", "Bug": "#a8b820",
+    "Rock": "#b8a038", "Ghost": "#705898", "Dragon": "#7038f8", "Dark": "#705848",
+    "Steel": "#b8b8d0", "Fairy": "#ee99ac",
+}
+
+# Attacking type -> defending types that differ from neutral effectiveness.
+_TYPE_CHART: dict[str, dict[str, float]] = {
+    "Normal": {"Rock": .5, "Ghost": 0, "Steel": .5},
+    "Fire": {"Fire": .5, "Water": .5, "Grass": 2, "Ice": 2, "Bug": 2, "Rock": .5, "Dragon": .5, "Steel": 2},
+    "Water": {"Fire": 2, "Water": .5, "Grass": .5, "Ground": 2, "Rock": 2, "Dragon": .5},
+    "Electric": {"Water": 2, "Electric": .5, "Grass": .5, "Ground": 0, "Flying": 2, "Dragon": .5},
+    "Grass": {"Fire": .5, "Water": 2, "Grass": .5, "Poison": .5, "Ground": 2, "Flying": .5, "Bug": .5, "Rock": 2, "Dragon": .5, "Steel": .5},
+    "Ice": {"Fire": .5, "Water": .5, "Grass": 2, "Ice": .5, "Ground": 2, "Flying": 2, "Dragon": 2, "Steel": .5},
+    "Fighting": {"Normal": 2, "Ice": 2, "Poison": .5, "Flying": .5, "Psychic": .5, "Bug": .5, "Rock": 2, "Ghost": 0, "Dark": 2, "Steel": 2, "Fairy": .5},
+    "Poison": {"Grass": 2, "Poison": .5, "Ground": .5, "Rock": .5, "Ghost": .5, "Steel": 0, "Fairy": 2},
+    "Ground": {"Fire": 2, "Electric": 2, "Grass": .5, "Poison": 2, "Flying": 0, "Bug": .5, "Rock": 2, "Steel": 2},
+    "Flying": {"Electric": .5, "Grass": 2, "Fighting": 2, "Bug": 2, "Rock": .5, "Steel": .5},
+    "Psychic": {"Fighting": 2, "Poison": 2, "Psychic": .5, "Dark": 0, "Steel": .5},
+    "Bug": {"Fire": .5, "Grass": 2, "Fighting": .5, "Poison": .5, "Flying": .5, "Psychic": 2, "Ghost": .5, "Dark": 2, "Steel": .5, "Fairy": .5},
+    "Rock": {"Fire": 2, "Ice": 2, "Fighting": .5, "Ground": .5, "Flying": 2, "Bug": 2, "Steel": .5},
+    "Ghost": {"Normal": 0, "Psychic": 2, "Ghost": 2, "Dark": .5},
+    "Dragon": {"Dragon": 2, "Steel": .5, "Fairy": 0},
+    "Dark": {"Fighting": .5, "Psychic": 2, "Ghost": 2, "Dark": .5, "Fairy": .5},
+    "Steel": {"Fire": .5, "Water": .5, "Electric": .5, "Ice": 2, "Rock": 2, "Steel": .5, "Fairy": 2},
+    "Fairy": {"Fire": .5, "Fighting": 2, "Poison": .5, "Dragon": 2, "Dark": 2, "Steel": .5},
+}
+
+
+def type_defenses(types: tuple[str, ...]) -> dict[str, float]:
+    return {
+        attacking: _product(_TYPE_CHART.get(attacking, {}).get(defending, 1.0) for defending in types)
+        for attacking in TYPE_ORDER
+    }
+
+
+def _product(values) -> float:
+    result = 1.0
+    for value in values:
+        result *= value
+    return result

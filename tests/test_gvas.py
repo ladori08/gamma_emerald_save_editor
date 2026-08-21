@@ -6,6 +6,7 @@ from gamma_editor.gvas import (
     parse_gvas,
     patch_int_array,
     patch_fixed_scalars,
+    patch_property_batch,
     patch_scalar,
     patch_soft_object,
     patch_soft_object_array,
@@ -225,6 +226,46 @@ def test_patch_move_and_pp_arrays_together() -> None:
         "/Game/Moves/BP_Move_Tackle (BP_Move_Tackle_C)",
     )
     assert after.properties[1].collection_values == (30, 35)
+
+
+def test_batch_resizes_multiple_siblings_and_parent_once() -> None:
+    child = b"".join(
+        (
+            _property("Nickname", _type("StrProperty"), fstring("A")),
+            _property("Nature", _type("EnumProperty", _type("ENature"), _type("ByteProperty")), fstring("ENature::Hardy")),
+            _property("Level", _type("IntProperty"), struct.pack("<i", 5)),
+            fstring("None"),
+        )
+    )
+    gvas = b"".join(
+        (
+            _base_header(),
+            _property(
+                "Pokemon",
+                _type("StructProperty", _type("PokemonInstanceData"), _type("/Script/PokemonEmerald")),
+                child,
+            ),
+            fstring("None"), struct.pack("<I", 0),
+        )
+    )
+    before = parse_gvas(gvas)
+    old_size = next(item.size for item in before.properties if item.path == "Pokemon")
+    raw = patch_property_batch(
+        before,
+        scalar_changes={
+            "Pokemon.Nickname": "Torch",
+            "Pokemon.Nature": "ENature::Adamant",
+            "Pokemon.Level": 12,
+        },
+    )
+    after = parse_gvas(raw)
+    values = {item.path: item.value for item in after.properties}
+    assert after.property_error is None
+    assert values["Pokemon.Nickname"] == "Torch"
+    assert values["Pokemon.Nature"] == "ENature::Adamant"
+    assert values["Pokemon.Level"] == 12
+    assert values["Pokemon"] is not None
+    assert next(item.size for item in after.properties if item.path == "Pokemon") > old_size
 
 
 def test_extract_append_and_remove_structured_array_elements() -> None:

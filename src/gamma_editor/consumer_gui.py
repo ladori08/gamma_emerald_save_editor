@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 import hashlib
 from pathlib import Path
+import re
 import sys
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
@@ -11,6 +12,7 @@ from .catalog import (
     BAG_POCKETS,
     BAG_POCKET_LABELS,
     GENDERS,
+    HOLDABLE_ITEM_NAMES,
     HOENN_DEX,
     ITEMS_BY_POCKET,
     ITEM_NAMES,
@@ -18,10 +20,17 @@ from .catalog import (
     MOVES,
     MOVES_BY_NAME,
     NATURES,
+    NATURE_BY_LABEL,
+    NATURE_LABELS,
     SPECIES,
     SPECIES_BY_NAME,
+    SPECIES_INFO,
     STATUS_CONDITIONS,
+    TYPE_COLORS,
+    TYPE_ORDER,
     display_name,
+    nature_label,
+    type_defenses,
 )
 from .domain import (
     BagEntry,
@@ -54,6 +63,7 @@ from .save_service import (
 
 APP_TITLE = "Gamma Emerald Save Editor"
 ENUM_PREFIXES = {
+    "Ability": "EPokemonAbility",
     "Nature": "ENature",
     "Gender": "EPokemonGender",
     "StatusCondition": "ESTATUSEffect",
@@ -79,7 +89,7 @@ class PokemonEditor(ttk.Frame):
         "Nickname", "Level", "CurrentEXP", "CurrentHP", "MaxHP",
         "HP_IV", "Attack_IV", "Defense_IV", "SpecialAttack_IV", "SpecialDefense_IV", "Speed_IV",
         "HP_EV", "Attack_EV", "Defense_EV", "SpecialAttack_EV", "SpecialDefense_EV", "Speed_EV",
-        "Nature", "Gender", "AbilitySlot", "HeldItem", "Friendship", "StatusCondition", "SleepCounter",
+        "Nature", "Gender", "Ability", "AbilitySlot", "HeldItem", "Friendship", "StatusCondition", "SleepCounter",
         "PokemonID", "OriginalTrainerName", "CurrentTrainerName", "OriginalTrainerID", "CurrentTrainerID",
         "CaughtBallName", "MetLocationOverride", "MetLevel", "MetType", "MemoNote", "EggCyclesRemaining",
         "EggSpeciesName", "EggShinyRolls", "bIsShiny", "bIsFainted", "bIsEgg", "bCannotEvolve",
@@ -128,21 +138,23 @@ class PokemonEditor(ttk.Frame):
             frame.columnconfigure(1, weight=1)
             frame.columnconfigure(3, weight=1)
 
-        self._choice(main, "Species", "SpeciesData", [item.name for item in SPECIES], 0, 0)
+        self.species_combo = self._choice(main, "Species", "SpeciesData", [item.name for item in SPECIES], 0, 0)
+        self.species_combo.bind("<<ComboboxSelected>>", self._on_species_changed)
         self._entry(main, "Nickname", "Nickname", 0, 2)
         self._spin(main, "Level", "Level", 1, 0, 1, 100)
         self._entry(main, "EXP", "CurrentEXP", 1, 2)
-        self._choice(main, "Nature", "Nature", list(NATURES), 2, 0)
+        self.nature_combo = self._choice(main, "Nature", "Nature", list(NATURE_LABELS), 2, 0)
         self._choice(main, "Gender", "Gender", list(GENDERS), 2, 2)
-        self._readonly(main, "Ability", "Ability", 3, 0)
-        self._spin(main, "Ability slot", "AbilitySlot", 3, 2, 0, 2)
-        self._choice(main, "Held item", "HeldItem", list(ITEM_NAMES), 4, 0)
+        self.ability_combo = self._choice(main, "Ability", "Ability", [], 3, 0)
+        self.ability_combo.bind("<<ComboboxSelected>>", self._on_ability_changed)
+        self._readonly(main, "Ability slot", "AbilitySlot", 3, 2)
+        self.held_item_combo = self._choice(main, "Held item", "HeldItem", list(HOLDABLE_ITEM_NAMES), 4, 0)
         self._spin(main, "Friendship", "Friendship", 4, 2, 0, 255)
         self._check(main, "Shiny", "bIsShiny", 5, 0)
         self._check(main, "Fainted", "bIsFainted", 5, 2)
         ttk.Label(
             main,
-            text="Species replacement uses the verified GE-1.0.0 DataAsset path. Stats and ability are not auto-recalculated.",
+            text="Ability choices are filtered by Species; (H) marks a Hidden Ability. Species changes do not auto-recalculate HP or stats.",
             style="Muted.TLabel",
             wraplength=720,
         ).grid(row=6, column=0, columnspan=4, sticky="w", pady=(14, 0))
@@ -239,13 +251,13 @@ class PokemonEditor(ttk.Frame):
             row=row, column=column + 1, sticky="ew", padx=(0, 14), pady=5
         )
 
-    def _choice(self, parent, label: str, field: str, values: list[str], row: int, column: int) -> None:
+    def _choice(self, parent, label: str, field: str, values: list[str], row: int, column: int) -> ttk.Combobox:
         var = tk.StringVar()
         self.vars[field] = var
         ttk.Label(parent, text=label).grid(row=row, column=column, sticky="w", padx=(0, 6), pady=5)
-        ttk.Combobox(parent, textvariable=var, values=values, state="readonly").grid(
-            row=row, column=column + 1, sticky="ew", padx=(0, 14), pady=5
-        )
+        widget = ttk.Combobox(parent, textvariable=var, values=values, state="readonly")
+        widget.grid(row=row, column=column + 1, sticky="ew", padx=(0, 14), pady=5)
+        return widget
 
     def _readonly(self, parent, label: str, field: str, row: int, column: int) -> None:
         var = tk.StringVar()
@@ -254,6 +266,43 @@ class PokemonEditor(ttk.Frame):
         ttk.Entry(parent, textvariable=var, state="readonly").grid(
             row=row, column=column + 1, sticky="ew", padx=(0, 14), pady=5
         )
+
+    def _refresh_species_dependent(self, *, choose_default: bool = False) -> None:
+        species_name = str(self.vars["SpeciesData"].get()).strip()
+        info = SPECIES_INFO.get(species_name.casefold())
+        if info is None or not info.abilities:
+            current = str(self.vars["Ability"].get()).strip() or "None"
+            self.ability_combo.configure(values=(current,), state="readonly")
+            self.vars["Ability"].set(current)
+            if choose_default or not self.vars["AbilitySlot"].get():
+                self.vars["AbilitySlot"].set("0")
+            return
+        labels = [item.label for item in info.abilities]
+        current = str(self.vars["Ability"].get()).strip()
+        selected = next(
+            (item for item in info.abilities if current.casefold() in {
+                item.label.casefold(), item.name.casefold(), item.enum_name.casefold(),
+            }),
+            None,
+        )
+        if selected is None and (choose_default or not current):
+            selected = info.abilities[0]
+        self.ability_combo.configure(values=labels, state="readonly")
+        if selected is not None:
+            self.vars["Ability"].set(selected.label)
+            self.vars["AbilitySlot"].set(str(selected.slot))
+
+    def _on_species_changed(self, _event=None) -> None:
+        self._refresh_species_dependent(choose_default=True)
+
+    def _on_ability_changed(self, _event=None) -> None:
+        info = SPECIES_INFO.get(str(self.vars["SpeciesData"].get()).strip().casefold())
+        if info is None:
+            return
+        label = str(self.vars["Ability"].get()).casefold()
+        choice = next((item for item in info.abilities if item.label.casefold() == label), None)
+        if choice is not None:
+            self.vars["AbilitySlot"].set(str(choice.slot))
 
     def _check(self, parent, label: str, field: str, row: int, column: int) -> None:
         var = tk.BooleanVar()
@@ -303,10 +352,10 @@ class PokemonEditor(ttk.Frame):
             defaults = pokemon_creation_defaults(document)
             for field, var in self.vars.items():
                 value = "" if field == "SpeciesData" else defaults.get(field, "")
-                if field in ENUM_PREFIXES:
+                if field == "Nature":
+                    value = nature_label(_enum_leaf(value))
+                elif field in ENUM_PREFIXES:
                     value = _enum_leaf(value)
-                elif field == "Ability":
-                    value = "None"
                 if isinstance(var, tk.BooleanVar):
                     var.set(bool(value))
                 else:
@@ -316,6 +365,7 @@ class PokemonEditor(ttk.Frame):
             for var in (*self.current_pp_vars, *self.max_pp_vars):
                 var.set("0")
             self.apply_button.configure(text="Create Pokemon", state="normal")
+            self._refresh_species_dependent(choose_default=False)
             self._update_ev_total()
             self._draw_preview(None)
             return
@@ -325,7 +375,10 @@ class PokemonEditor(ttk.Frame):
             value = fields.get(field, "")
             if field == "SpeciesData":
                 value = pokemon.species
-            elif field in ENUM_PREFIXES or field == "Ability":
+            elif field == "Nature":
+                leaf = _enum_leaf(value)
+                value = nature_label(leaf) if leaf in NATURES else leaf
+            elif field in ENUM_PREFIXES:
                 value = _enum_leaf(value)
             if isinstance(var, tk.BooleanVar):
                 var.set(bool(value))
@@ -339,6 +392,7 @@ class PokemonEditor(ttk.Frame):
             self.current_pp_vars[index].set(str(current_pp[index]) if index < len(current_pp) else "0")
             self.max_pp_vars[index].set(str(max_pp[index]) if index < len(max_pp) else "0")
         self.apply_button.configure(text="Apply staged changes", state="normal")
+        self._refresh_species_dependent(choose_default=False)
         self._update_ev_total()
         self._draw_preview(pokemon)
 
@@ -388,10 +442,23 @@ class PokemonEditor(ttk.Frame):
                 for field in self.SCALAR_FIELDS:
                     path = pokemon.prefix + "." + field
                     prop = by_path.get(path)
-                    if prop is None or not prop.editable or field == "Ability":
+                    if prop is None or not prop.editable:
                         continue
                     raw: object = self.vars[field].get()
-                    if field in ENUM_PREFIXES:
+                    if field == "Nature":
+                        canonical = NATURE_BY_LABEL.get(str(raw).casefold())
+                        if canonical is None:
+                            raise ValueError("Choose a valid Nature.")
+                        raw = f"ENature::{canonical}"
+                    elif field == "Ability":
+                        info = SPECIES_INFO.get(str(self.vars["SpeciesData"].get()).strip().casefold())
+                        choice = next(
+                            (item for item in info.abilities if item.label == raw), None
+                        ) if info else None
+                        if info and choice is None:
+                            raise ValueError("Choose an Ability valid for the selected Species.")
+                        raw = f"EPokemonAbility::{choice.enum_name if choice else raw}"
+                    elif field in ENUM_PREFIXES:
                         raw = f"{ENUM_PREFIXES[field]}::{raw}"
                     value = self.app.coerce_property_value(prop, raw)
                     if value != prop.value:
@@ -403,10 +470,23 @@ class PokemonEditor(ttk.Frame):
                         template_props.setdefault(prop.name, prop)
                 for field in self.SCALAR_FIELDS:
                     prop = template_props.get(field)
-                    if prop is None or field == "Ability":
+                    if prop is None:
                         continue
                     raw = self.vars[field].get()
-                    if field in ENUM_PREFIXES:
+                    if field == "Nature":
+                        canonical = NATURE_BY_LABEL.get(str(raw).casefold())
+                        if canonical is None:
+                            raise ValueError("Choose a valid Nature.")
+                        raw = f"ENature::{canonical}"
+                    elif field == "Ability":
+                        info = SPECIES_INFO.get(str(self.vars["SpeciesData"].get()).strip().casefold())
+                        choice = next(
+                            (item for item in info.abilities if item.label == raw), None
+                        ) if info else None
+                        if info and choice is None:
+                            raise ValueError("Choose an Ability valid for the selected Species.")
+                        raw = f"EPokemonAbility::{choice.enum_name if choice else raw}"
+                    elif field in ENUM_PREFIXES:
                         raw = f"{ENUM_PREFIXES[field]}::{raw}"
                     changes[field] = self.app.coerce_property_value(prop, raw)
 
@@ -725,7 +805,7 @@ class SaveEditorApp(tk.Tk):
         body.add(listing, weight=2)
         body.add(details, weight=3)
         self.dex_tree = ttk.Treeview(listing, columns=("id", "species", "type"), show="headings")
-        for name, title, width in (("id", "Hoenn #", 80), ("species", "Pokémon", 220), ("type", "Primary type", 120)):
+        for name, title, width in (("id", "Hoenn #", 80), ("species", "Pokémon", 220), ("type", "Type(s)", 140)):
             self.dex_tree.heading(name, text=title)
             self.dex_tree.column(name, width=width, anchor="w")
         self.dex_tree.pack(fill="both", expand=True)
@@ -733,21 +813,47 @@ class SaveEditorApp(tk.Tk):
         ttk.Label(details, text="Pokémon information", style="SectionTitle.TLabel").grid(
             row=0, column=0, columnspan=2, sticky="w", pady=(0, 10)
         )
+        details.rowconfigure(2, weight=1)
+        details.columnconfigure(0, weight=1)
+        info = ttk.Frame(details)
+        info.grid(row=1, column=0, sticky="ew")
+        info.columnconfigure(1, weight=1)
         self.dex_detail_vars: dict[str, tk.StringVar] = {}
-        for row, (label, key) in enumerate((
-            ("Name", "name"), ("Hoenn number", "number"), ("Primary type", "type"),
+        fields = (
+            ("Name", "name"), ("Hoenn number", "number"), ("Types", "type"),
+            ("Abilities", "abilities"), ("Height / Weight", "size"),
             ("Gamma DataAsset", "asset"), ("Owned locations", "owned"),
-        ), start=1):
-            ttk.Label(details, text=label + ":", width=18).grid(row=row, column=0, sticky="nw", pady=5)
+        )
+        for row, (label, key) in enumerate(fields):
+            ttk.Label(info, text=label + ":", width=18).grid(row=row, column=0, sticky="nw", pady=3)
             var = tk.StringVar(value="—")
             self.dex_detail_vars[key] = var
-            ttk.Label(details, textvariable=var, wraplength=620).grid(row=row, column=1, sticky="nw", pady=5)
-        ttk.Label(
-            details,
-            text="This Pokédex describes the Pokémon assets available in Gamma GE-1.0.0; it is independent from your in-game Seen/Caught progress.",
-            style="Muted.TLabel", wraplength=650,
-        ).grid(row=7, column=0, columnspan=2, sticky="w", pady=(18, 0))
-        details.columnconfigure(1, weight=1)
+            ttk.Label(info, textvariable=var, wraplength=650).grid(row=row, column=1, sticky="nw", pady=3)
+
+        lower = ttk.Frame(details)
+        lower.grid(row=2, column=0, sticky="nsew", pady=(14, 0))
+        lower.columnconfigure(0, weight=1)
+        lower.columnconfigure(1, weight=1)
+        ttk.Label(lower, text="Base stats", style="SectionTitle.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(lower, text="Type defenses", style="SectionTitle.TLabel").grid(row=0, column=1, sticky="w", padx=(18, 0))
+        self.dex_stats_canvas = tk.Canvas(lower, width=390, height=230, highlightthickness=0, bg="#ffffff")
+        self.dex_stats_canvas.grid(row=1, column=0, sticky="nsew", pady=(6, 0))
+        defenses = ttk.Frame(lower)
+        defenses.grid(row=1, column=1, sticky="nw", padx=(18, 0), pady=(6, 0))
+        self.dex_defense_labels: dict[str, tk.Label] = {}
+        for index, type_name in enumerate(TYPE_ORDER):
+            row, column = divmod(index, 6)
+            label = tk.Label(
+                defenses, text=type_name[:3].upper() + "\n1×", width=6, height=2,
+                relief="solid", borderwidth=1, bg=TYPE_COLORS[type_name], fg="#111111",
+                font=("Segoe UI", 8, "bold"),
+            )
+            label.grid(row=row, column=column, padx=1, pady=1)
+            self.dex_defense_labels[type_name] = label
+        self.dex_note_var = tk.StringVar()
+        ttk.Label(details, textvariable=self.dex_note_var, style="Muted.TLabel", wraplength=700).grid(
+            row=3, column=0, sticky="w", pady=(12, 0)
+        )
 
     def _build_legality(self) -> None:
         self.legality_tab.rowconfigure(2, weight=1)
@@ -1234,12 +1340,15 @@ class SaveEditorApp(tk.Tk):
         dex_by_name = {name: number for number, name in HOENN_DEX.items()}
         self.dex_tree.delete(*self.dex_tree.get_children())
         for species in SPECIES:
-            haystack = f"{species.name} {species.category} {dex_by_name.get(species.name, '')}".casefold()
+            info = SPECIES_INFO.get(species.name.casefold())
+            types = info.types if info else (species.category,)
+            abilities = " ".join(item.name for item in info.abilities) if info else ""
+            haystack = f"{species.name} {' '.join(types)} {abilities} {dex_by_name.get(species.name, '')}".casefold()
             if needle and needle not in haystack:
                 continue
             self.dex_tree.insert(
                 "", "end", iid=species.name,
-                values=(dex_by_name.get(species.name, "—"), species.name, species.category),
+                values=(dex_by_name.get(species.name, "—"), species.name, " / ".join(types)),
             )
         children = self.dex_tree.get_children()
         choice = selected_name if selected_name and self.dex_tree.exists(selected_name) else (children[0] if children else "")
@@ -1257,21 +1366,69 @@ class SaveEditorApp(tk.Tk):
         if species is None:
             return
         dex_by_name = {value: key for key, value in HOENN_DEX.items()}
+        info = SPECIES_INFO.get(species.name.casefold())
         locations: list[str] = []
         for pokemon in self.party_views:
             if pokemon.species == species.name:
                 locations.append(f"Party {pokemon.slot_index + 1}")
         doc = self.current_document()
         if doc is not None:
-            for box_index, box_name in enumerate(box_names(doc)):
-                for pokemon in storage_pokemon(doc, box_index):
-                    if pokemon.occupied and pokemon.species == species.name:
-                        locations.append(f"{box_name} / Slot {pokemon.slot_index + 1}")
+            names = box_names(doc)
+            for prop in doc.properties:
+                if prop.name != "SpeciesData" or not prop.path.startswith("Boxes["):
+                    continue
+                if f"DA_{species.name}" not in str(prop.value):
+                    continue
+                match = re.match(r"^Boxes\[(\d+)]\.Pokemon(?:\[(\d+)])?\.SpeciesData$", prop.path)
+                if match:
+                    box_index = int(match.group(1))
+                    slot_index = int(match.group(2) or 0)
+                    locations.append(f"{names[box_index]} / Slot {slot_index + 1}")
         self.dex_detail_vars["name"].set(species.name)
         self.dex_detail_vars["number"].set(str(dex_by_name.get(species.name, "Not mapped")))
-        self.dex_detail_vars["type"].set(species.category)
+        self.dex_detail_vars["type"].set(" / ".join(info.types) if info else f"{species.category} (asset folder)")
+        self.dex_detail_vars["abilities"].set(
+            "  •  ".join(item.label for item in info.abilities) if info else "Game-specific / not mapped"
+        )
+        self.dex_detail_vars["size"].set(
+            f"{info.height_m:g} m / {info.weight_kg:g} kg" if info else "Game-specific / not mapped"
+        )
         self.dex_detail_vars["asset"].set(species.path)
         self.dex_detail_vars["owned"].set(", ".join(locations) if locations else "None in Party/Storage")
+        self._draw_dex_stats(info)
+        if info:
+            defenses = type_defenses(info.types)
+            for type_name, label in self.dex_defense_labels.items():
+                multiplier = defenses[type_name]
+                text = "¼" if multiplier == .25 else "½" if multiplier == .5 else str(int(multiplier))
+                label.configure(text=type_name[:3].upper() + f"\n{text}×")
+            self.dex_note_var.set("(H) marks a Hidden Ability. Type defenses show incoming damage multipliers.")
+        else:
+            for type_name, label in self.dex_defense_labels.items():
+                label.configure(text=type_name[:3].upper() + "\n—")
+            self.dex_note_var.set("This game-specific species has no standard metadata mapping; its save fields remain preserved.")
+
+    def _draw_dex_stats(self, info) -> None:
+        canvas = self.dex_stats_canvas
+        canvas.delete("all")
+        if info is None:
+            canvas.create_text(12, 24, anchor="w", text="No mapped base-stat data", fill="#66717a")
+            return
+        rows = (
+            ("HP", "HP"), ("Attack", "Attack"), ("Defense", "Defense"),
+            ("Sp. Atk", "SpecialAttack"), ("Sp. Def", "SpecialDefense"), ("Speed", "Speed"),
+        )
+        colors = ("#ff6b35", "#98d51d", "#f7d23b", "#ff8a2a", "#80cf25", "#f3c82e")
+        for index, ((label, key), color) in enumerate(zip(rows, colors)):
+            y = 20 + index * 30
+            value = int(info.base_stats[key])
+            canvas.create_text(8, y, anchor="w", text=label, fill="#59636b")
+            canvas.create_text(82, y, anchor="e", text=str(value), fill="#31383d")
+            canvas.create_rectangle(96, y - 6, 96 + 260 * min(value, 255) / 255, y + 6, fill=color, outline="")
+        canvas.create_text(
+            8, 205, anchor="w", text=f"Total  {sum(info.base_stats.values())}",
+            font=("Segoe UI", 10, "bold"),
+        )
 
     def _refresh_legality(self, doc) -> None:
         findings = legality_issues(doc)

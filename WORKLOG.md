@@ -188,3 +188,29 @@ The real fixture passed container integrity and semantic encode/decode round-tri
 - Published sanitized v0.5 source as remote commit `ee750bb` and refreshed draft PR `#1`. The
   one-commit remote compare lists exactly 13 source, test and continuity files; no build artifact,
   game file, save, backup, private fixture or key was uploaded.
+
+## 2026-08-22 — Species-aware editor and performance pass
+
+- User requested Species-filtered Ability lists with Hidden Ability labels, annotated Nature
+  effects, holdable-only Held Items, a detailed competitive-information Pokédex and substantially
+  faster Pokémon create/edit/move interactions.
+- Generated a source-only metadata module for 116 standard species already present in Gamma's
+  118-asset catalog. Gecqua and MissingNo. remain explicitly unmapped; no game asset was copied.
+- Ability controls now list only the selected Species' legal options, append `(H)` to Hidden
+  Abilities and automatically synchronize Ability Slot. Domain validation rejects mismatched
+  Ability/slot combinations.
+- Nature labels now include exact effects such as `Adamant (+Atk / -SpAtk)`. Held Item excludes
+  Poké Balls and Key Items and retains the Gamma item groups carrying hold/Fling semantics.
+- Rebuilt Pokédex details with types, legal Abilities, height/weight, six base-stat bars, total and
+  all 18 incoming type multipliers. Owned-location lookup was reduced to one property pass.
+- Added a one-pass serializer that batches fixed/variable scalars, SoftObject paths, Move/PP arrays
+  and complete Party/Storage payload replacements while updating every parent-size field once and
+  structurally reparsing once.
+- Real-story in-memory timings: edit 0.78 s, Storage create 0.94 s, Party create 2.49 s and
+  Storage-to-Party move 1.03 s. All results reparsed with no property error; no live save was written.
+- Automated suite passes 28 tests. Final packaged CLI validated the live story container with
+  22,482 parsed properties and no parser error; packaged GUI smoke test passed.
+- Built tool-only v0.6.0. GUI SHA-256:
+  `EFD35AE6751765C62BB314E6EE766248F92E5FE3A16F8A1C497D3F2A36DC9DAF`.
+- v0.6.0 CLI SHA-256: `0904B532CBD85CFEFEC37B87E78E2B487AEC5652B941EEAF6FEC9662BA4FD576`.
+- v0.6.0 ZIP SHA-256: `9A74BEB1CA557163F2FC77B9D5B6BFEC20A00D0E1475CB98648290A17E291AC5`.
