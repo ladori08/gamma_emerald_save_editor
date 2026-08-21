@@ -24,6 +24,8 @@ Last updated: 2026-08-22
 10. The v0.4 GUI has Trainer/Pokémon/Bag/Pokédex tabs. Party and Storage share drag/drop cards;
     Bag has five filtered pockets with add/edit/remove; Pokédex shows species info; EV total cap can
     be toggled. Real-save in-memory mutation/encrypt/decrypt passes, but live game reload is pending.
+11. Sanitized v0.4 feature source is published as `3e8c2b7` on draft PR `#1`; a documentation-only
+    follow-up records final release hashes.
 
 ## Local identifiers
 

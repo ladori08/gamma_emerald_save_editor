@@ -155,7 +155,8 @@ The real fixture passed container integrity and semantic encode/decode round-tri
 - Automated suite now passes 24 tests. Source GUI assertions verified 4 main tabs, 5 Bag pocket tabs,
   6 Party cards and 30 Storage cards. Packaged GUI/CLI read-only smoke tests passed while the game
   was running, so structural live-game verification remains pending.
-- Built local v0.4.0 release. GUI SHA-256:
-  `8394B3EE7B0ABF474D8EBDFD7A521C3C01BF40FF81D7459FC0C83FFBCEA96025`.
-  CLI SHA-256: `6006815577293A2E66BE64C735A6C409405B4D221C4DFEEDD5D832EFA7D6CCA5`.
-  ZIP SHA-256: `D4FEDBAD6A3974512FA2AC06E15C5573D241A5C03FA2670FAF40E1B48A714CF4`.
+- Built local v0.4.0 release from the final sanitized source. GUI SHA-256:
+  `710CE6742B3B2AEA25FC811EEEEBA2A399513183EF5EA454CC7B380C696E0196`.
+  CLI SHA-256: `85E3E2B5F9430BBD73CF13006DABF4E8E68412268B734E841920F9D44DA1CD48`.
+  ZIP SHA-256: `1AE4D410AA01F9363DFBA8DA30E9B20BEC4A49E9CC90B940509CEFE47FB2690C`.
+- Published sanitized v0.4 source as remote commit `3e8c2b7` and refreshed draft PR `#1`.

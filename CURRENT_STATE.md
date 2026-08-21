@@ -35,6 +35,7 @@ Last updated: 2026-08-22
   local history.
 - The Indigo-style implementation is committed locally on `feat/story-save-schema` as `8f0d7bf`;
   `origin` points to the dedicated GitHub repository.
+- Sanitized v0.4 feature source is published on the same draft PR as remote commit `3e8c2b7`.
 
 ## Safety status
 
