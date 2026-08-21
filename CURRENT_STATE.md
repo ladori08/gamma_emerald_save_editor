@@ -45,8 +45,9 @@ Last updated: 2026-08-22
 - The Indigo-style implementation is committed locally on `feat/story-save-schema` as `8f0d7bf`;
   `origin` points to the dedicated GitHub repository.
 - Sanitized v0.4 feature source is published on the same draft PR as remote commit `3e8c2b7`.
-- Sanitized v0.5 source and publication notes are on draft PR `#1`; its current remote head before
-  v0.6 publication is `85c1b214891415db7d57f0e9d535ab8dd24c5b3a`.
+- Sanitized v0.6 source is published on draft PR `#1` as remote commit
+  `814bc53b4dac46a9f8be36ea5f8aa7d536b5b451`. Its one-commit compare contains exactly 16
+  source/test/documentation files and no build artifact, game file, save, fixture or key.
 
 ## Safety status
 

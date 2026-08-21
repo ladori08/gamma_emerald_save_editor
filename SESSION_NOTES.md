@@ -7,8 +7,8 @@ Last updated: 2026-08-22
 1. Story/Quest/Berry/Options all exist and validate. Private unpacked fixtures under
    `samples/private` are ignored and must never be committed.
 2. Current parser baseline: 22,482 story records, no parser error; 28 automated tests.
-3. Current branch is `feat/story-save-schema`; v0.6 species-aware editor changes are implemented
-   and awaiting the sanitized source-only publication step on the existing draft PR.
+3. Current branch is `feat/story-save-schema`; v0.6 species-aware editor source is published on
+   the existing draft PR as remote commit `814bc53b4dac46a9f8be36ea5f8aa7d536b5b451`.
 4. Repository `ladori08/gamma_emerald_save_editor` is public, and the user explicitly approved
    public publication on 2026-08-21.
 5. Publish the initial main history, publish the feature branch, and use a draft PR unless the user
@@ -38,6 +38,8 @@ Last updated: 2026-08-22
     abilities/type defenses. Gecqua and MissingNo. are intentionally unmapped.
 15. One-pass property transactions reduce real-story operations to about 0.78 s edit, 0.94 s Box
     creation, 2.49 s Party creation and 1.03 s drag/drop. The v0.6 tool-only ZIP contains no key.
+16. Sanitized v0.6 source was published as one fast-forward commit over the prior clean remote
+    head. GitHub compare reports exactly 16 source/test/documentation files and no artifacts.
 
 ## Local identifiers
 
