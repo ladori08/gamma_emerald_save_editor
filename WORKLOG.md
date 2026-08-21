@@ -185,3 +185,6 @@ The real fixture passed container integrity and semantic encode/decode round-tri
 - v0.5.0 GUI SHA-256: `DD9EC1C34F7024D33B7587B4C39E33BB04E248FE3C3E1926C97336BBCAD4DF2C`.
 - v0.5.0 CLI SHA-256: `536BFD90CCE0FEB5D2955076276915C97F4B48D64B113E79B2A297FC5026DC61`.
 - v0.5.0 ZIP SHA-256: `8ABF9B4A006F83F9A59C0E270943F254260398A147FD6501863AE5E5E1AAE339`.
+- Published sanitized v0.5 source as remote commit `ee750bb` and refreshed draft PR `#1`. The
+  one-commit remote compare lists exactly 13 source, test and continuity files; no build artifact,
+  game file, save, backup, private fixture or key was uploaded.

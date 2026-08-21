@@ -39,6 +39,8 @@ Last updated: 2026-08-22
 - The Indigo-style implementation is committed locally on `feat/story-save-schema` as `8f0d7bf`;
   `origin` points to the dedicated GitHub repository.
 - Sanitized v0.4 feature source is published on the same draft PR as remote commit `3e8c2b7`.
+- Sanitized v0.5 empty-slot creation source is published on draft PR `#1` as remote commit
+  `ee750bb`; the one-commit compare contains exactly 13 source, test and continuity files.
 
 ## Safety status
 

@@ -7,7 +7,8 @@ Last updated: 2026-08-22
 1. Story/Quest/Berry/Options all exist and validate. Private unpacked fixtures under
    `samples/private` are ignored and must never be committed.
 2. Current parser baseline: more than 22,000 story records, no parser error; 26 automated tests.
-3. Current branch is `feat/story-save-schema`; v0.5 empty-slot creation changes await commit/publication.
+3. Current branch is `feat/story-save-schema`; v0.5 empty-slot creation is committed locally and
+   published on the existing draft PR.
 4. Repository `ladori08/gamma_emerald_save_editor` is public, and the user explicitly approved
    public publication on 2026-08-21.
 5. Publish the initial main history, publish the feature branch, and use a draft PR unless the user
@@ -30,6 +31,8 @@ Last updated: 2026-08-22
     in place or appended to Party, then receives a catalog Species DataAsset, unique Pokemon ID,
     current Trainer ownership and validated form values. Source GUI creation, GVAS reparse and GES1
     encode/decode pass in memory; controlled live-game load/resave remains pending.
+13. Sanitized v0.5 feature source is published as remote commit `ee750bb`. Its compare against the
+    prior remote head contains exactly 13 source, test and continuity files and no artifacts.
 
 ## Local identifiers
 
