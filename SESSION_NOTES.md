@@ -6,14 +6,14 @@ Last updated: 2026-08-22
 
 1. Story/Quest/Berry/Options all exist and validate. Private unpacked fixtures under
    `samples/private` are ignored and must never be committed.
-2. Current parser baseline: 22,479 story records, no parser error; 24 automated tests.
-3. Current branch is `feat/story-save-schema`; v0.4 changes are awaiting the session commit.
+2. Current parser baseline: more than 22,000 story records, no parser error; 26 automated tests.
+3. Current branch is `feat/story-save-schema`; v0.5 empty-slot creation changes await commit/publication.
 4. Repository `ladori08/gamma_emerald_save_editor` is public, and the user explicitly approved
    public publication on 2026-08-21.
 5. Publish the initial main history, publish the feature branch, and use a draft PR unless the user
    explicitly requests otherwise.
-6. Local v0.4.0 is built under `release`; packaged GUI/CLI pass read-only validation against the
-   story save. The game was running, so no v0.4 structural live write was attempted.
+6. Local v0.5.0 is built under `release`; packaged GUI/CLI pass read-only validation against the
+   story save. No v0.5 structural live write was attempted.
 7. The first controlled live write changed Potion quantity 2 -> 3 and passed backup, atomic-write,
    visual game load, normal in-game resave, 22,479-record reparse and packaged CLI validation.
 8. Public source uses external key provisioning via `GAMMA_EMERALD_SAVE_KEY_HEX` or ignored
@@ -26,6 +26,10 @@ Last updated: 2026-08-22
     be toggled. Real-save in-memory mutation/encrypt/decrypt passes, but live game reload is pending.
 11. Sanitized v0.4 feature source is published as `3e8c2b7` on draft PR `#1`; a documentation-only
     follow-up records final release hashes.
+12. Empty Party/Storage cards now expose Create Pokemon. A verified empty Box struct is activated
+    in place or appended to Party, then receives a catalog Species DataAsset, unique Pokemon ID,
+    current Trainer ownership and validated form values. Source GUI creation, GVAS reparse and GES1
+    encode/decode pass in memory; controlled live-game load/resave remains pending.
 
 ## Local identifiers
 

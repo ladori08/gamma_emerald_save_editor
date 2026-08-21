@@ -29,11 +29,13 @@ from .domain import (
     add_bag_item,
     bag_entries,
     box_names,
+    create_pokemon,
     edit_bag_item,
     move_pokemon,
     party_pokemon,
     patch_domain_values,
     patch_pokemon,
+    pokemon_creation_defaults,
     remove_bag_item,
     storage_pokemon,
 )
@@ -278,13 +280,43 @@ class PokemonEditor(ttk.Frame):
 
     def load(self, pokemon: PokemonView | None) -> None:
         self.current = pokemon
-        if pokemon is None or not pokemon.occupied:
-            self.heading_var.set(f"{self.title_text}: empty slot (read-only)")
+        if pokemon is None:
+            self.heading_var.set(f"{self.title_text}: select a slot")
             for var in self.vars.values():
                 var.set(False if isinstance(var, tk.BooleanVar) else "")
             for var in (*self.move_vars, *self.current_pp_vars, *self.max_pp_vars):
                 var.set("")
             self.apply_button.configure(state="disabled")
+            self._draw_preview(None)
+            return
+        if not pokemon.occupied:
+            document = self.app.current_document()
+            if document is None:
+                self.apply_button.configure(state="disabled")
+                return
+            location = (
+                f"next Party slot {pokemon.slot_index + 1}"
+                if pokemon.source == "Party"
+                else f"Box {int(pokemon.box_index or 0) + 1}, slot {pokemon.slot_index + 1}"
+            )
+            self.heading_var.set(f"Create Pokemon - {location}")
+            defaults = pokemon_creation_defaults(document)
+            for field, var in self.vars.items():
+                value = "" if field == "SpeciesData" else defaults.get(field, "")
+                if field in ENUM_PREFIXES:
+                    value = _enum_leaf(value)
+                elif field == "Ability":
+                    value = "None"
+                if isinstance(var, tk.BooleanVar):
+                    var.set(bool(value))
+                else:
+                    var.set(str(value))
+            for var in self.move_vars:
+                var.set("")
+            for var in (*self.current_pp_vars, *self.max_pp_vars):
+                var.set("0")
+            self.apply_button.configure(text="Create Pokemon", state="normal")
+            self._update_ev_total()
             self._draw_preview(None)
             return
         fields = pokemon.fields
@@ -306,7 +338,7 @@ class PokemonEditor(ttk.Frame):
             self.move_vars[index].set(display_name(str(move_names[index])) if index < len(move_names) else "")
             self.current_pp_vars[index].set(str(current_pp[index]) if index < len(current_pp) else "0")
             self.max_pp_vars[index].set(str(max_pp[index]) if index < len(max_pp) else "0")
-        self.apply_button.configure(state="normal")
+        self.apply_button.configure(text="Apply staged changes", state="normal")
         self._update_ev_total()
         self._draw_preview(pokemon)
 
@@ -347,23 +379,36 @@ class PokemonEditor(ttk.Frame):
     def apply(self) -> None:
         pokemon = self.current
         document = self.app.current_document()
-        if pokemon is None or document is None or not pokemon.occupied:
+        if pokemon is None or document is None:
             return
         by_path = {item.path: item for item in document.properties}
         changes: dict[str, object] = {}
         try:
-            for field in self.SCALAR_FIELDS:
-                path = pokemon.prefix + "." + field
-                prop = by_path.get(path)
-                if prop is None or not prop.editable or field == "Ability":
-                    continue
-                var = self.vars[field]
-                raw: object = var.get()
-                if field in ENUM_PREFIXES:
-                    raw = f"{ENUM_PREFIXES[field]}::{raw}"
-                value = self.app.coerce_property_value(prop, raw)
-                if value != prop.value:
-                    changes[field] = value
+            if pokemon.occupied:
+                for field in self.SCALAR_FIELDS:
+                    path = pokemon.prefix + "." + field
+                    prop = by_path.get(path)
+                    if prop is None or not prop.editable or field == "Ability":
+                        continue
+                    raw: object = self.vars[field].get()
+                    if field in ENUM_PREFIXES:
+                        raw = f"{ENUM_PREFIXES[field]}::{raw}"
+                    value = self.app.coerce_property_value(prop, raw)
+                    if value != prop.value:
+                        changes[field] = value
+            else:
+                template_props: dict[str, PropertyRecord] = {}
+                for prop in document.properties:
+                    if prop.path.startswith("Boxes[") and ".Pokemon" in prop.path:
+                        template_props.setdefault(prop.name, prop)
+                for field in self.SCALAR_FIELDS:
+                    prop = template_props.get(field)
+                    if prop is None or field == "Ability":
+                        continue
+                    raw = self.vars[field].get()
+                    if field in ENUM_PREFIXES:
+                        raw = f"{ENUM_PREFIXES[field]}::{raw}"
+                    changes[field] = self.app.coerce_property_value(prop, raw)
 
             current_hp = float(self.vars["CurrentHP"].get())
             max_hp = float(self.vars["MaxHP"].get())
@@ -375,7 +420,7 @@ class PokemonEditor(ttk.Frame):
             if species is None:
                 raise ValueError("Choose a Species from the verified GE-1.0.0 catalog.")
             species_change = species if species.name != pokemon.species else None
-            if species_change and not messagebox.askyesno(
+            if pokemon.occupied and species_change and not messagebox.askyesno(
                 APP_TITLE,
                 "Change Species DataAsset?\n\nGamma does not store enough verified base-stat metadata for automatic "
                 "recalculation yet. Review HP, ability and moves before saving.",
@@ -395,19 +440,29 @@ class PokemonEditor(ttk.Frame):
                 moves.append(move)
                 current_pp.append(int(self.current_pp_vars[index].get()))
                 max_pp.append(int(self.max_pp_vars[index].get()))
-            old_names = tuple(display_name(str(value)) for value in pokemon.fields.get("MoveNames", ()))
-            moves_changed = tuple(move.name for move in moves) != old_names
-            pp_changed = tuple(current_pp) != tuple(pokemon.fields.get("CurrentPP", ())) or tuple(max_pp) != tuple(
-                pokemon.fields.get("MaxPP", ())
-            )
-            self.app.stage_pokemon(
-                pokemon,
-                changes,
-                species=species_change,
-                moves=moves if moves_changed else None,
-                current_pp=current_pp if moves_changed or pp_changed else None,
-                max_pp=max_pp if moves_changed or pp_changed else None,
-            )
+            if pokemon.occupied:
+                old_names = tuple(display_name(str(value)) for value in pokemon.fields.get("MoveNames", ()))
+                moves_changed = tuple(move.name for move in moves) != old_names
+                pp_changed = tuple(current_pp) != tuple(pokemon.fields.get("CurrentPP", ())) or tuple(max_pp) != tuple(
+                    pokemon.fields.get("MaxPP", ())
+                )
+                self.app.stage_pokemon(
+                    pokemon,
+                    changes,
+                    species=species_change,
+                    moves=moves if moves_changed else None,
+                    current_pp=current_pp if moves_changed or pp_changed else None,
+                    max_pp=max_pp if moves_changed or pp_changed else None,
+                )
+            else:
+                self.app.stage_new_pokemon(
+                    pokemon,
+                    changes,
+                    species=species,
+                    moves=moves if moves else None,
+                    current_pp=current_pp if moves else None,
+                    max_pp=max_pp if moves else None,
+                )
         except (ValueError, GammaEditorError) as exc:
             messagebox.showerror(APP_TITLE, str(exc))
 
@@ -591,7 +646,7 @@ class SaveEditorApp(tk.Tk):
         self.box_combo.bind("<<ComboboxSelected>>", lambda _event: self._refresh_storage())
         ttk.Button(controls, text="◀", width=4, command=lambda: self._step_box(-1)).pack(side="left")
         ttk.Button(controls, text="▶", width=4, command=lambda: self._step_box(1)).pack(side="left", padx=3)
-        ttk.Label(controls, text="Empty slots remain locked until struct insertion is verified.", style="Muted.TLabel").pack(
+        ttk.Label(controls, text="Select an empty slot to create a Pokemon.", style="Muted.TLabel").pack(
             side="left", padx=14
         )
         left = ttk.Frame(self.storage_tab, padding=(0, 4, 8, 4))
@@ -975,6 +1030,17 @@ class SaveEditorApp(tk.Tk):
         self.selected_pokemon_location = location
         if kind == "party":
             pokemon = next((item for item in self.party_views if item.slot_index == slot), None)
+            if pokemon is None:
+                next_slot = len(self.party_views)
+                pokemon = PokemonView(
+                    prefix=f"Party[{next_slot}]",
+                    source="Party",
+                    box_index=None,
+                    slot_index=next_slot,
+                    species="Empty",
+                    occupied=False,
+                    fields={},
+                )
         else:
             pokemon = next((item for item in self.storage_views if item.slot_index == slot), None)
         self.pokemon_editor.load(pokemon)
@@ -982,9 +1048,15 @@ class SaveEditorApp(tk.Tk):
             self._refresh_pokemon_workspace()
 
     def _on_pokemon_press(self, location: tuple[str, int | None, int]) -> None:
-        self.drag_source = location
         self._select_pokemon_location(location)
-        self.status_var.set("Drag to another Party or Storage card to move/swap the complete Pokémon.")
+        kind, _box, slot = location
+        views = self.party_views if kind == "party" else self.storage_views
+        pokemon = next((item for item in views if item.slot_index == slot), None)
+        self.drag_source = location if pokemon and pokemon.occupied else None
+        if self.drag_source is not None:
+            self.status_var.set("Drag to another Party or Storage card to move/swap the complete Pokémon.")
+        else:
+            self.status_var.set("Choose a Species and click Create Pokemon to fill this empty slot.")
 
     def _on_pokemon_release(self, event) -> None:
         source = self.drag_source
@@ -1265,7 +1337,7 @@ class SaveEditorApp(tk.Tk):
             f"Parser note    : {doc.property_error or 'complete'}",
             f"Catalog        : {len(SPECIES)} species / {len(MOVES)} moves",
             "",
-            "Unknown data is preserved byte-for-byte. Empty structs and unsupported collection resizing remain locked.",
+            "Unknown data is preserved byte-for-byte. Verified empty Pokemon structs can be activated; unsupported collections remain locked.",
         ]
         self.diagnostics.configure(state="normal")
         self.diagnostics.delete("1.0", "end")
@@ -1314,6 +1386,46 @@ class SaveEditorApp(tk.Tk):
         )
         count = len(scalar_changes) + (1 if species else 0) + (1 if moves is not None else 0)
         self._mark_staged(f"Staged {count} change group(s) for {pokemon.species}")
+
+    def stage_new_pokemon(
+        self,
+        pokemon: PokemonView,
+        scalar_changes: dict[str, object],
+        *,
+        species,
+        moves=None,
+        current_pp=None,
+        max_pp=None,
+    ) -> None:
+        doc = self.current_document()
+        if doc is None:
+            return
+        party_slot = (
+            pokemon.slot_index
+            if pokemon.source == "Party" and pokemon.slot_index < len(self.party_views)
+            else len(self.party_views)
+        )
+        self.configure(cursor="wait")
+        self.update_idletasks()
+        try:
+            self.working_gvas = create_pokemon(
+                doc,
+                pokemon,
+                species=species,
+                scalar_changes=scalar_changes,
+                moves=moves,
+                current_pp=current_pp,
+                max_pp=max_pp,
+                allow_ev_over_510=self.allow_ev_over_510.get(),
+            )
+        finally:
+            self.configure(cursor="")
+        self.selected_pokemon_location = (
+            ("party", None, party_slot)
+            if pokemon.source == "Party"
+            else ("storage", pokemon.box_index, pokemon.slot_index)
+        )
+        self._mark_staged(f"Created {species.name} in an empty {pokemon.source} slot")
 
     def apply_bag(self) -> None:
         doc = self.current_document()

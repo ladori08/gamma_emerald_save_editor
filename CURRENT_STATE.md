@@ -13,17 +13,20 @@ Last updated: 2026-08-22
 - GUI, CLI, guarded write/backup service, diagnostics and schema-aware editor implemented.
 - Story GVAS recursively parses more than 22,000 tagged records with no parser error, including
   Party, 14 boxes, Daycare, Bag, Seen/Caught and progress fields.
-- The v0.4 consumer GUI has four focused tabs: Trainer, Pokémon, Bag and Pokédex. Party and Storage
+- The v0.5 consumer GUI has four focused tabs: Trainer, Pokémon, Bag and Pokédex. Party and Storage
   share one workspace with six Party cards, a compact 5 × 6 Box grid and complete-payload drag/drop.
+- Empty Party and Storage cards now open a Create Pokemon form. Creation activates the game's
+  complete verified empty struct template, assigns a collision-free Pokemon ID and current Trainer
+  ownership, and accepts the same catalog/scalar/move fields used by occupied records.
 - Bag uses the five in-game pockets and supports filtered add/edit/remove, including safe insertion
   of a previously absent pocket such as TMs. Backup restore remains available from the toolbar.
 - Bundled tool-only catalogs contain 118 Gamma species paths and 99 move paths. Species, nature,
   gender, status, met type, moves and PP are selected from validated controls; no game asset is
   copied into the repository or release.
 - Pokédex is now a Gamma species-information lookup rather than a Seen/Caught progress report.
-- Automated suite passes: 24 tests plus real-story in-memory Bag insertion/removal, Party/Storage
-  payload movement, EV-limit override and encrypt/decrypt verification.
-- Packaged v0.4 GUI and CLI both pass read-only validation against the real story save.
+- Automated suite passes: 26 tests plus real-story in-memory Bag insertion/removal, Party/Storage
+  payload movement, empty-slot creation, EV-limit override and encrypt/decrypt verification.
+- Packaged v0.5 GUI and CLI both pass read-only validation against the real story save.
 - Local git repository initialized on `main`; initial implementation commit is `39bbe27`.
 - GitHub repository `ladori08/gamma_emerald_save_editor` exists and admin/push access is verified.
   The user explicitly approved publishing it as a public repository on 2026-08-21.
@@ -48,11 +51,10 @@ Last updated: 2026-08-22
 
 ## Current limitation
 
-Creating a brand-new Pokémon from an empty template, Dex/Quest set resizing, fields absent from the
-young save, and a controlled live-game reload for the new Bag/Party/Storage structural edits remain
-pending. Pokémon sprites were not bundled so the public repository stays tool-only. Unsupported
-structures remain read-only.
+Dex/Quest set resizing, fields absent from the young save, and controlled live-game reloads for the
+new Bag/Party/Storage/creation structural edits remain pending. Pokémon sprites were not bundled so
+the public repository stays tool-only. Unsupported structures remain read-only.
 
 ## Next verified milestone
 
-Close the game and live-test one Bag insertion plus one Party/Storage move before tagging v0.4.
+Live-test one newly created Pokémon with game load and normal in-game resave before tagging v0.5.

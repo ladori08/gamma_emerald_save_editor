@@ -660,6 +660,44 @@ def patch_scalar(document: GvasDocument, property_name: str, value: object) -> b
     raise GvasError(f"Unsupported editable property type {prop.type_name}.")
 
 
+def patch_fixed_scalars(document: GvasDocument, changes: dict[str, object]) -> bytes:
+    """Patch multiple verified fixed-width scalar fields with one structural reparse."""
+    data = bytearray(document.raw)
+    for path, value in changes.items():
+        matches = [item for item in document.properties if item.path == path]
+        if len(matches) != 1:
+            raise GvasError(f"Expected one property at {path!r}, found {len(matches)}.")
+        prop = matches[0]
+        if not prop.editable:
+            raise GvasError(f"Property {path!r} is not safely editable.")
+        if prop.type_name == "BoolProperty":
+            if prop.bool_value_offset is None:
+                raise GvasError(f"Bool property {path!r} is missing its verified header offset.")
+            if prop.size == 0:
+                if bool(value):
+                    data[prop.bool_value_offset] |= 0x10
+                else:
+                    data[prop.bool_value_offset] &= ~0x10
+            else:
+                data[prop.bool_value_offset] = 1 if bool(value) else 0
+            continue
+        fmt = _SCALAR_FORMATS.get(prop.type_name)
+        if fmt is None:
+            raise GvasError(f"Property {path!r} is not a fixed-width scalar.")
+        try:
+            encoded = struct.pack(fmt, value)
+        except (struct.error, TypeError, ValueError) as exc:
+            raise GvasError(f"Invalid value for {prop.type_name}: {value!r}.") from exc
+        if len(encoded) != prop.value_size:
+            raise GvasError(f"Scalar encoded size changed unexpectedly for {path!r}.")
+        data[prop.value_offset : prop.end_offset] = encoded
+    rebuilt = bytes(data)
+    verified = parse_gvas(rebuilt)
+    if verified.property_error:
+        raise GvasError(f"Fixed-scalar batch failed structural verification: {verified.property_error}")
+    return rebuilt
+
+
 def _property_at(document: GvasDocument, path: str, expected_type: str) -> PropertyRecord:
     matches = [item for item in document.properties if item.path == path]
     if len(matches) != 1:

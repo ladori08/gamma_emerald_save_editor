@@ -5,6 +5,7 @@ import struct
 from gamma_editor.gvas import (
     parse_gvas,
     patch_int_array,
+    patch_fixed_scalars,
     patch_scalar,
     patch_soft_object,
     patch_soft_object_array,
@@ -81,6 +82,25 @@ def test_parse_and_patch_bool_header_value() -> None:
     assert doc.properties[0].value is False
     patched = patch_scalar(doc, "PickedStarter", True)
     assert parse_gvas(patched).properties[0].value is True
+
+
+def test_patch_multiple_fixed_scalars_in_one_pass() -> None:
+    gvas = b"".join(
+        (
+            _base_header(),
+            _property("Level", _type("IntProperty"), struct.pack("<i", 5)),
+            _property("CurrentHP", _type("FloatProperty"), struct.pack("<f", 20.0)),
+            fstring("None"),
+            struct.pack("<I", 0),
+        )
+    )
+
+    raw = patch_fixed_scalars(parse_gvas(gvas), {"Level": 12, "CurrentHP": 31.0})
+    after = parse_gvas(raw)
+
+    assert after.property_error is None
+    assert after.properties[0].value == 12
+    assert after.properties[1].value == 31.0
 
 
 def test_parse_fixed_array_index_prefix() -> None:

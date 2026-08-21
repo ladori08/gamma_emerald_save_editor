@@ -24,6 +24,7 @@ from .gvas import (
     patch_structured_array,
     patch_int_array,
     patch_scalar,
+    patch_fixed_scalars,
     patch_soft_object,
     patch_soft_object_array,
     struct_payload,
@@ -182,6 +183,174 @@ def _empty_storage_payload(document: GvasDocument) -> bytes:
             if not view.occupied:
                 return struct_payload(document, storage_slot_path(box_index, view.slot_index))
     raise GvasError("No empty verified storage slot is available.")
+
+
+def pokemon_creation_defaults(document: GvasDocument) -> dict[str, object]:
+    """Return conservative values for activating a verified empty Pokemon struct."""
+    trainer_name = next(
+        (str(item.value) for item in document.properties if item.path == "PlayerName"),
+        "None",
+    )
+    trainer_id = next(
+        (int(item.value) for item in document.properties if item.path == "PlayerId"),
+        0,
+    )
+    used_ids = {
+        int(view.fields.get("PokemonID", 0))
+        for view in party_pokemon(document)
+        if view.occupied
+    }
+    for box_index in range(len(box_names(document))):
+        used_ids.update(
+            int(view.fields.get("PokemonID", 0))
+            for view in storage_pokemon(document, box_index)
+            if view.occupied
+        )
+    pokemon_id = max(used_ids, default=0) + 1
+    if pokemon_id > 2_147_483_647:
+        pokemon_id = next(
+            (candidate for candidate in range(1, 2_147_483_648) if candidate not in used_ids),
+            0,
+        )
+    if pokemon_id <= 0:
+        raise GvasError("No unused positive Pokemon ID is available.")
+
+    defaults: dict[str, object] = {
+        "Nickname": "None",
+        "Level": 5,
+        "CurrentEXP": 0.0,
+        "CurrentHP": 1.0,
+        "MaxHP": 1.0,
+        "Nature": "ENature::Hardy",
+        "Gender": "EPokemonGender::Genderless",
+        "AbilitySlot": 0,
+        "HeldItem": "None",
+        "Friendship": 70,
+        "StatusCondition": "ESTATUSEffect::None",
+        "SleepCounter": 0,
+        "PokemonID": pokemon_id,
+        "OriginalTrainerName": trainer_name,
+        "CurrentTrainerName": trainer_name,
+        "OriginalTrainerID": trainer_id,
+        "CurrentTrainerID": trainer_id,
+        "CaughtBallName": "Pokeball",
+        "MetLocationOverride": "",
+        "MetLevel": 5,
+        "MetType": "EPokemonMetType::Gift",
+        "MemoNote": "",
+        "EggCyclesRemaining": 0,
+        "EggSpeciesName": "None",
+        "EggShinyRolls": 1,
+        "bIsShiny": False,
+        "bIsFainted": False,
+        "bIsEgg": False,
+        "bCannotEvolve": False,
+        "bIsFollowerOut": False,
+    }
+    for stat in ("HP", "Attack", "Defense", "SpecialAttack", "SpecialDefense", "Speed"):
+        defaults[stat + "_IV"] = 0
+        defaults[stat + "_EV"] = 0
+    return defaults
+
+
+def create_pokemon(
+    document: GvasDocument,
+    pokemon: PokemonView,
+    *,
+    species: AssetChoice,
+    scalar_changes: dict[str, object] | None = None,
+    moves: list[AssetChoice] | None = None,
+    current_pp: list[int] | None = None,
+    max_pp: list[int] | None = None,
+    allow_ev_over_510: bool = False,
+) -> bytes:
+    """Activate an empty Box struct or append its verified template to Party."""
+    if pokemon.occupied:
+        raise GvasError("The selected Pokemon slot is already occupied.")
+    catalog_species = SPECIES_BY_NAME.get(species.name.casefold())
+    if catalog_species != species:
+        raise GvasError("Species is not in the verified GE-1.0.0 catalog.")
+
+    if pokemon.source == "Party":
+        elements = list(structured_array_elements(document, "Party"))
+        if 0 <= pokemon.slot_index < len(elements):
+            current = next(
+                (view for view in party_pokemon(document) if view.slot_index == pokemon.slot_index),
+                None,
+            )
+            if current is None or current.occupied:
+                raise GvasError("The selected Party slot is already occupied.")
+            raw = document.raw
+            prefix = f"Party[{pokemon.slot_index}]"
+        else:
+            if len(elements) >= 6:
+                raise GvasError("Party is full.")
+            elements.append(_empty_storage_payload(document))
+            raw = patch_structured_array(document, "Party", elements)
+            prefix = f"Party[{len(elements) - 1}]"
+    elif pokemon.source == "Storage":
+        if pokemon.box_index is None:
+            raise GvasError("Storage box is required for Pokemon creation.")
+        current = _storage_view(document, pokemon.box_index, pokemon.slot_index)
+        if current.occupied:
+            raise GvasError("The selected Storage slot is already occupied.")
+        raw = document.raw
+        prefix = storage_slot_path(pokemon.box_index, pokemon.slot_index)
+    else:
+        raise GvasError("Pokemon creation target must be Party or Storage.")
+
+    raw = patch_soft_object(
+        parse_gvas(raw),
+        prefix + ".SpeciesData",
+        species.path,
+        species.object_name,
+    )
+    seeded = parse_gvas(raw)
+    created = _pokemon_view(
+        seeded,
+        prefix,
+        source=pokemon.source,
+        box_index=pokemon.box_index,
+        slot_index=int(prefix.rsplit("[", 1)[-1].rstrip("]")) if pokemon.source == "Party" else pokemon.slot_index,
+    )
+    if not created.occupied or created.species != species.name:
+        raise GvasError("Pokemon SpeciesData activation failed verification.")
+
+    requested = pokemon_creation_defaults(document)
+    requested.update(scalar_changes or {})
+    available = {
+        item.name: item
+        for item in seeded.properties
+        if item.path.startswith(prefix + ".") and item.editable
+    }
+    unknown = sorted(set(requested) - set(available))
+    if unknown:
+        raise GvasError("Pokemon template is missing verified fields: " + ", ".join(unknown))
+    changes = {
+        field: value
+        for field, value in requested.items()
+        if available[field].value != value
+    }
+    raw = patch_pokemon(
+        seeded,
+        created,
+        scalar_changes=changes,
+        moves=moves,
+        current_pp=current_pp,
+        max_pp=max_pp,
+        allow_ev_over_510=allow_ev_over_510,
+    )
+    verified = parse_gvas(raw)
+    final = _pokemon_view(
+        verified,
+        prefix,
+        source=created.source,
+        box_index=created.box_index,
+        slot_index=created.slot_index,
+    )
+    if not final.occupied or final.species != species.name:
+        raise GvasError("Created Pokemon failed structural verification.")
+    return raw
 
 
 def move_pokemon(
@@ -598,7 +767,7 @@ def rule_for(path: str) -> str:
         return "0–9999"
     if name in {"CurrentHP", "MaxHP", "CurrentEXP"}:
         return "≥0"
-    if name in {"PlayerId", "PlayerMoney", "GameCornerCoins"}:
+    if name in {"PlayerId", "PokemonID", "PlayerMoney", "GameCornerCoins"}:
         return "0–2,147,483,647"
     return "fixed-size" if path else ""
 
@@ -633,7 +802,7 @@ def validate_domain_value(
         raise GvasError("Item quantity must be between 0 and 9999.")
     if name in {"CurrentHP", "MaxHP", "CurrentEXP"} and float(value) < 0:
         raise GvasError(f"{name} cannot be negative.")
-    if name in {"PlayerId", "PlayerMoney", "GameCornerCoins"} and not 0 <= int(value) <= 2_147_483_647:
+    if name in {"PlayerId", "PokemonID", "PlayerMoney", "GameCornerCoins"} and not 0 <= int(value) <= 2_147_483_647:
         raise GvasError(f"{name} must fit a signed 32-bit positive integer.")
     enum_rules = {
         "Nature": ("ENature", NATURES),
@@ -716,7 +885,7 @@ def patch_pokemon(
     allow_ev_over_510: bool = False,
 ) -> bytes:
     if not pokemon.occupied:
-        raise GvasError("Empty Pokémon slots cannot be created until struct insertion is verified.")
+        raise GvasError("Use create_pokemon() to activate a verified empty Pokemon slot.")
     raw = document.raw
     if species is not None:
         raw = patch_soft_object(
@@ -737,7 +906,43 @@ def patch_pokemon(
             else 1
         )
     )
+    current = parse_gvas(raw)
+    by_path = {item.path: item for item in current.properties}
+    ev_changes = {field: int(value) for field, value in scalar_items if field.endswith("_EV")}
+    if ev_changes and not allow_ev_over_510:
+        final_total = sum(
+            ev_changes.get(item.name, int(item.value))
+            for item in current.properties
+            if item.path.startswith(pokemon.prefix + ".") and item.name.endswith("_EV")
+        )
+        if final_total > 510:
+            raise GvasError(f"Total EV would be {final_total}; maximum is 510.")
+
+    fixed_types = {
+        "BoolProperty", "Int8Property", "ByteProperty", "UInt8Property", "Int16Property",
+        "UInt16Property", "IntProperty", "Int32Property", "UInt32Property", "Int64Property",
+        "UInt64Property", "FloatProperty", "DoubleProperty",
+    }
+    fixed_changes: dict[str, object] = {}
+    variable_changes: list[tuple[str, object]] = []
     for field, value in scalar_items:
+        path = pokemon.prefix + "." + field
+        prop = by_path.get(path)
+        if prop is None:
+            raise GvasError(f"Expected one Pokemon field at {path!r}.")
+        validate_domain_value(
+            current,
+            prop,
+            value,
+            allow_ev_over_510=True if field.endswith("_EV") else allow_ev_over_510,
+        )
+        if prop.type_name in fixed_types:
+            fixed_changes[path] = value
+        else:
+            variable_changes.append((field, value))
+    if fixed_changes:
+        raw = patch_fixed_scalars(current, fixed_changes)
+    for field, value in variable_changes:
         current = parse_gvas(raw)
         raw = patch_domain_value(
             current,

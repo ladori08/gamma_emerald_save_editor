@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from gamma_editor.domain import legality_issues, validate_domain_value
+from gamma_editor.domain import legality_issues, pokemon_creation_defaults, validate_domain_value
 from gamma_editor.errors import GvasError
 from gamma_editor.gvas import GvasDocument, PropertyRecord
 
@@ -75,3 +75,28 @@ def test_legality_report_flags_invalid_level() -> None:
     document = GvasDocument(raw=b"", header=None, properties=[species, level])  # type: ignore[arg-type]
     issues = legality_issues(document)
     assert any("Level 101" in issue.message for issue in issues)
+
+
+def test_creation_defaults_use_trainer_and_unique_pokemon_id() -> None:
+    player_name = _prop("PlayerName", 0)
+    player_name.type_name = "StrProperty"
+    player_name.value = "MAY"
+    player_id = _prop("PlayerId", 12345)
+    species = _prop("Party[0].SpeciesData", 0)
+    species.type_name = "SoftObjectProperty"
+    species.value = "/Game/BPS/PokemonData/Pokemon/Water/DA_Mudkip (DA_Mudkip)"
+    pokemon_id = _prop("Party[0].PokemonID", 800)
+    document = GvasDocument(
+        raw=b"",
+        header=None,  # type: ignore[arg-type]
+        properties=[player_name, player_id, species, pokemon_id],
+    )
+
+    defaults = pokemon_creation_defaults(document)
+
+    assert defaults["OriginalTrainerName"] == "MAY"
+    assert defaults["CurrentTrainerName"] == "MAY"
+    assert defaults["OriginalTrainerID"] == 12345
+    assert defaults["PokemonID"] == 801
+    assert defaults["Level"] == 5
+    assert defaults["MaxHP"] == 1.0

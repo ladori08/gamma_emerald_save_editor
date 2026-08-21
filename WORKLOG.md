@@ -160,3 +160,28 @@ The real fixture passed container integrity and semantic encode/decode round-tri
   CLI SHA-256: `85E3E2B5F9430BBD73CF13006DABF4E8E68412268B734E841920F9D44DA1CD48`.
   ZIP SHA-256: `1AE4D410AA01F9363DFBA8DA30E9B20BEC4A49E9CC90B940509CEFE47FB2690C`.
 - Published sanitized v0.4 source as remote commit `3e8c2b7` and refreshed draft PR `#1`.
+
+## 2026-08-22 — Empty-slot Pokémon creation
+
+- User reported that leaving every empty Pokémon slot read-only defeated the purpose of the editor
+  and requested functional editing instead of a locked form.
+- Confirmed every one of the 420 fixed Box slots contains a complete 49-field
+  `PokemonInstanceData` template. Seeding its verified `SpeciesData` SoftObject makes the supported
+  child fields editable without inventing or regenerating an unknown struct layout.
+- Added Create Pokemon mode for empty Storage cards and empty Party cards. Storage activates the
+  selected fixed struct in place; Party appends the same verified template to its structured array.
+- Creation assigns a catalog Species DataAsset, collision-free positive Pokemon ID, current Trainer
+  name/ID ownership and conservative defaults, then applies the regular validated level, HP,
+  IV/EV, nature, gender, held-item, met, move and PP controls.
+- Empty cards no longer begin drag operations. Occupied cards retain complete-payload drag/drop,
+  while raw empty-slot fields stay protected from arbitrary generic-property writes.
+- Added batched fixed-width scalar writes with one final structural reparse, reducing creation time
+  while retaining domain validation and unknown-byte preservation.
+- Automated suite passes 26 tests. A source-GUI interaction created Poochyena in an empty Box slot;
+  separate real-story in-memory tests created Ralts in Party and passed full GVAS reparse and GES1
+  encrypt/decrypt semantic round-trip. No live save was written.
+- Built and smoke-tested tool-only v0.5.0. Packaged GUI stayed running normally and packaged CLI
+  passed real-story GES1/AES/SHA-1/GVAS validation.
+- v0.5.0 GUI SHA-256: `DD9EC1C34F7024D33B7587B4C39E33BB04E248FE3C3E1926C97336BBCAD4DF2C`.
+- v0.5.0 CLI SHA-256: `536BFD90CCE0FEB5D2955076276915C97F4B48D64B113E79B2A297FC5026DC61`.
+- v0.5.0 ZIP SHA-256: `8ABF9B4A006F83F9A59C0E270943F254260398A147FD6501863AE5E5E1AAE339`.

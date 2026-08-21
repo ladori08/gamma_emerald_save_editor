@@ -48,11 +48,14 @@ gamma-save slot-filename PokemonSaveSlot
 
 ## Editor workspace
 
-Version 0.4 uses an Indigo-style consumer workspace instead of exposing raw schema rows:
+Version 0.5 uses an Indigo-style consumer workspace instead of exposing raw schema rows:
 
 - Trainer form with synchronized Trainer name/ID edits.
 - One Pokémon tab combines six Party cards with a compact 5 × 6 current-Box grid. Dragging cards
   moves or swaps the complete serialized Pokémon between Party and all 14 storage boxes.
+- Selecting an empty Party or Storage card opens a Create Pokémon form. Creation activates the
+  game's complete verified empty struct template, assigns a unique Pokémon ID and current Trainer
+  ownership, and supports the same species/stats/IV/EV/move/PP fields as an occupied slot.
 - Verified GE-1.0.0 catalogs containing 118 Species DataAssets and 99 Move Blueprints.
 - Pokémon preview cards, HP bar, IV/EV helpers, optional EV-total limit override, four move/PP rows
   and staged-change workflow.
@@ -74,9 +77,10 @@ Version 0.4 uses an Indigo-style consumer workspace instead of exposing raw sche
   Friendship, Ability Slot, HP/EXP and Bag quantity.
 - Verified staged serializers now cover Species DataAssets, Nature/Gender/status/met enums, up to
   four Move Blueprint paths, Current/Max PP arrays, complete Party/Storage Pokémon payload moves,
-  Bag pocket/item insertion/removal, and existing scalar/string fields.
-- Read-only until independently game-verified: creating a brand-new Pokémon from an empty template,
-  resizing Seen/Caught sets, and editing Quest flag arrays.
+  verified empty-slot Pokémon creation, Bag pocket/item insertion/removal, and existing
+  scalar/string fields.
+- Read-only until independently game-verified: resizing Seen/Caught sets and editing Quest flag
+  arrays. Newly created Pokémon still require a controlled live-game load/resave verification.
 
 No user save, decrypted payload, encryption key, or backup is committed to source control.
 
