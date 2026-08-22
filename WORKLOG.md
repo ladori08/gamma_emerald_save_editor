@@ -213,7 +213,13 @@ The real fixture passed container integrity and semantic encode/decode round-tri
 - Built tool-only v0.6.0. GUI SHA-256:
   `EFD35AE6751765C62BB314E6EE766248F92E5FE3A16F8A1C497D3F2A36DC9DAF`.
 - v0.6.0 CLI SHA-256: `0904B532CBD85CFEFEC37B87E78E2B487AEC5652B941EEAF6FEC9662BA4FD576`.
-- v0.6.0 ZIP SHA-256: `9A74BEB1CA557163F2FC77B9D5B6BFEC20A00D0E1475CB98648290A17E291AC5`.
+- Initial key-free v0.6.0 ZIP SHA-256:
+  `9A74BEB1CA557163F2FC77B9D5B6BFEC20A00D0E1475CB98648290A17E291AC5`.
 - Published sanitized v0.6 source as remote commit `814bc53b4dac46a9f8be36ea5f8aa7d536b5b451`
   and refreshed draft PR `#1`. The fast-forward compare contains exactly 16 source, test and
   continuity files; no build artifact, game, save, backup, private fixture or key was uploaded.
+- User reported that the local GUI could not open a save because the runtime key had been omitted
+  from the release folder. Copied the ignored local key beside the GUI and CLI, refreshed the local
+  ZIP, and verified the release CLI against the real story save. No key was added to Git/GitHub.
+- Runnable local v0.6.0 ZIP SHA-256:
+  `A6F6814A488431F5C149E50BD5B7E59E8E45BED577A698FF563EA454D2A6ADCF`.

@@ -33,6 +33,8 @@ Last updated: 2026-08-22
 - Automated suite passes: 28 tests plus real-story in-memory Bag insertion/removal, Party/Storage
   payload movement, empty-slot creation, EV-limit override and encrypt/decrypt verification.
 - Packaged v0.6 GUI and CLI both pass smoke/read-only validation against the real story save.
+- The ignored local v0.6 release is provisioned with `save_key.hex` beside both launchers so it runs
+  directly on this machine. The key remains absent from Git tracking and GitHub publication.
 - Local git repository initialized on `main`; initial implementation commit is `39bbe27`.
 - GitHub repository `ladori08/gamma_emerald_save_editor` exists and admin/push access is verified.
   The user explicitly approved publishing it as a public repository on 2026-08-21.

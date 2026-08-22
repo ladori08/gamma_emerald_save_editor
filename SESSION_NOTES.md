@@ -37,9 +37,12 @@ Last updated: 2026-08-22
     markers, annotated Nature labels, holdable-only Held Item choices, and detailed Pokédex stats/
     abilities/type defenses. Gecqua and MissingNo. are intentionally unmapped.
 15. One-pass property transactions reduce real-story operations to about 0.78 s edit, 0.94 s Box
-    creation, 2.49 s Party creation and 1.03 s drag/drop. The v0.6 tool-only ZIP contains no key.
+    creation, 2.49 s Party creation and 1.03 s drag/drop.
 16. Sanitized v0.6 source was published as one fast-forward commit over the prior clean remote
     head. GitHub compare reports exactly 16 source/test/documentation files and no artifacts.
+17. After the first local v0.6 launch reported a missing runtime key, the ignored release folder
+    and local ZIP were provisioned with `save_key.hex` beside GUI/CLI. Release CLI validation then
+    passed. The key remains excluded from Git and GitHub.
 
 ## Local identifiers
 
