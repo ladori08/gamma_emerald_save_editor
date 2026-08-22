@@ -120,41 +120,216 @@ def validated_enum_value(field: str, value: object) -> str:
     return f"{ENUM_PREFIXES[field]}::{selected}"
 
 
-class SearchableCombobox(ttk.Combobox):
-    """Editable ttk combobox whose popup narrows as the user types."""
+class SearchableCombobox(ttk.Frame):
+    """Search entry with a non-focus-stealing popup list.
 
-    _NAVIGATION_KEYS = {
+    Native Windows ttk combobox popdowns take keyboard focus as soon as they are posted, which
+    interrupts live typing after the first character. This composite keeps focus in its Entry and
+    uses a lightweight popup only for the filtered choices.
+    """
+
+    _IGNORED_RELEASE_KEYS = {
         "Up", "Down", "Left", "Right", "Home", "End", "Prior", "Next",
         "Return", "Escape", "Tab", "Shift_L", "Shift_R", "Control_L", "Control_R",
     }
 
-    def __init__(self, parent, *, values=(), **kwargs) -> None:
+    def __init__(self, parent, *, values=(), textvariable=None, width=None, state="normal", **kwargs) -> None:
+        super().__init__(parent, **kwargs)
         self._source_values = tuple(str(value) for value in values)
-        kwargs.pop("state", None)
-        super().__init__(parent, values=self._source_values, state="normal", **kwargs)
-        self.bind("<KeyRelease>", self._on_key_release, add="+")
-        self.bind("<ButtonPress-1>", self._on_button_press, add="+")
-        self.bind("<Escape>", lambda _event: self.configure(values=self._source_values), add="+")
+        self._matches = self._source_values
+        self._enabled = state != "disabled"
+        self.variable = textvariable or tk.StringVar(self)
+        self.columnconfigure(0, weight=1)
+
+        entry_options = {"textvariable": self.variable}
+        if width is not None:
+            entry_options["width"] = width
+        self.entry = ttk.Entry(self, **entry_options)
+        self.entry.grid(row=0, column=0, sticky="ew")
+        self.arrow = ttk.Button(self, text="▾", width=2, takefocus=False, command=self._toggle_popup)
+        self.arrow.grid(row=0, column=1, sticky="ns")
+
+        self._popup: tk.Toplevel | None = None
+        self._listbox: tk.Listbox | None = None
+        self._owner = self.winfo_toplevel()
+        self._outside_binding = self._owner.bind("<ButtonPress-1>", self._on_owner_click, add="+")
+
+        self.entry.bind("<KeyRelease>", self._on_key_release, add="+")
+        self.entry.bind("<Down>", lambda _event: self._move_selection(1), add="+")
+        self.entry.bind("<Up>", lambda _event: self._move_selection(-1), add="+")
+        self.entry.bind("<Return>", self._commit_from_keyboard, add="+")
+        self.entry.bind("<Escape>", lambda _event: self._hide_popup(), add="+")
+        self.entry.bind("<FocusOut>", lambda _event: self.after_idle(self._hide_if_focus_left), add="+")
+        self.set_source_values(self._source_values, enabled=self._enabled)
+
+    def destroy(self) -> None:
+        self._hide_popup(destroy=True)
+        try:
+            self._owner.unbind("<ButtonPress-1>", self._outside_binding)
+        except tk.TclError:
+            pass
+        super().destroy()
+
+    def get(self) -> str:
+        return str(self.variable.get())
+
+    def set(self, value: object) -> None:
+        self.variable.set(str(value))
 
     def set_source_values(self, values, *, enabled: bool = True) -> None:
         self._source_values = tuple(str(value) for value in values)
-        self.configure(values=self._source_values, state="normal" if enabled else "disabled")
+        self._matches = self._source_values
+        self._enabled = enabled
+        widget_state = "normal" if enabled else "disabled"
+        self.entry.configure(state=widget_state)
+        self.arrow.configure(state=widget_state)
+        if not enabled:
+            self._hide_popup()
 
-    def _on_button_press(self, event) -> None:
-        if event.x >= max(0, self.winfo_width() - 24):
-            self.configure(values=self._source_values)
+    def _ensure_popup(self) -> None:
+        if self._popup is not None and self._popup.winfo_exists():
+            return
+        popup = tk.Toplevel(self)
+        popup.withdraw()
+        popup.overrideredirect(True)
+        popup.transient(self._owner)
+        border = ttk.Frame(popup, relief="solid", borderwidth=1)
+        border.pack(fill="both", expand=True)
+        listbox = tk.Listbox(
+            border,
+            activestyle="none",
+            exportselection=False,
+            highlightthickness=0,
+            borderwidth=0,
+            selectmode="browse",
+        )
+        scrollbar = ttk.Scrollbar(border, orient="vertical", command=listbox.yview)
+        listbox.configure(yscrollcommand=scrollbar.set)
+        listbox.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        listbox.bind("<ButtonRelease-1>", self._commit_from_mouse)
+        listbox.bind("<Return>", self._commit_from_keyboard)
+        listbox.bind("<Escape>", lambda _event: self._hide_popup())
+        self._popup = popup
+        self._listbox = listbox
+
+    def _render_matches(self, matches: tuple[str, ...]) -> None:
+        self._ensure_popup()
+        assert self._listbox is not None
+        self._matches = matches
+        self._listbox.delete(0, "end")
+        for value in matches:
+            self._listbox.insert("end", value)
+        self._listbox.selection_clear(0, "end")
+        if matches:
+            self._listbox.activate(0)
+
+    def _show_popup(self, matches: tuple[str, ...], *, select_text: bool = False) -> None:
+        if not self._enabled:
+            return
+        self._render_matches(matches)
+        if not matches:
+            self._hide_popup()
+            return
+        assert self._popup is not None
+        self.update_idletasks()
+        rows = min(12, len(matches))
+        width = max(self.winfo_width(), 180)
+        height = rows * 22 + 2
+        self._popup.geometry(f"{width}x{height}+{self.winfo_rootx()}+{self.winfo_rooty() + self.winfo_height()}")
+        self._popup.deiconify()
+        self._popup.lift()
+        self.entry.focus_set()
+        if select_text:
+            self.entry.selection_range(0, "end")
+            self.entry.icursor("end")
+
+    def _hide_popup(self, *, destroy: bool = False) -> str:
+        if self._popup is not None and self._popup.winfo_exists():
+            if destroy:
+                self._popup.destroy()
+                self._popup = None
+                self._listbox = None
+            else:
+                self._popup.withdraw()
+        return "break"
+
+    def _popup_visible(self) -> bool:
+        return bool(self._popup is not None and self._popup.winfo_exists() and self._popup.state() == "normal")
+
+    def _toggle_popup(self) -> None:
+        if self._popup_visible():
+            self._hide_popup()
+            self.entry.focus_set()
+            return
+        self._show_popup(self._source_values, select_text=True)
 
     def _on_key_release(self, event) -> None:
-        if event.keysym in self._NAVIGATION_KEYS or str(self.cget("state")) == "disabled":
+        if event.keysym in self._IGNORED_RELEASE_KEYS or not self._enabled:
             return
-        matches = filter_choices(self._source_values, self.get())
-        self.configure(values=matches)
-        if matches:
-            self.after_idle(self._post_dropdown)
+        self._show_popup(filter_choices(self._source_values, self.get()))
 
-    def _post_dropdown(self) -> None:
-        if self.focus_get() is self and str(self.cget("state")) != "disabled":
-            self.event_generate("<Down>")
+    def _move_selection(self, direction: int) -> str:
+        if not self._popup_visible():
+            self._show_popup(filter_choices(self._source_values, self.get()))
+        if self._listbox is None or not self._matches:
+            return "break"
+        selected = self._listbox.curselection()
+        current = selected[0] if selected else (-1 if direction > 0 else 0)
+        index = max(0, min(len(self._matches) - 1, current + direction))
+        self._listbox.selection_clear(0, "end")
+        self._listbox.selection_set(index)
+        self._listbox.activate(index)
+        self._listbox.see(index)
+        return "break"
+
+    def _commit_from_keyboard(self, _event=None) -> str:
+        if not self._popup_visible() or self._listbox is None or not self._matches:
+            return "break"
+        selected = self._listbox.curselection()
+        index = selected[0] if selected else self._listbox.index("active")
+        self._choose(index)
+        return "break"
+
+    def _commit_from_mouse(self, event) -> str:
+        if self._listbox is not None and self._matches:
+            self._choose(self._listbox.nearest(event.y))
+        return "break"
+
+    def _choose(self, index: int) -> None:
+        if not 0 <= index < len(self._matches):
+            return
+        self.variable.set(self._matches[index])
+        self._hide_popup()
+        self.entry.focus_set()
+        self.entry.icursor("end")
+        self.event_generate("<<ComboboxSelected>>")
+
+    @staticmethod
+    def _is_descendant(widget, ancestor) -> bool:
+        current = widget
+        while current is not None:
+            if current is ancestor:
+                return True
+            current = getattr(current, "master", None)
+        return False
+
+    def _on_owner_click(self, event) -> None:
+        if self._is_descendant(event.widget, self):
+            return
+        if self._popup is not None and self._is_descendant(event.widget, self._popup):
+            return
+        self._hide_popup()
+
+    def _hide_if_focus_left(self) -> None:
+        focus = self.focus_get()
+        if focus is None:
+            return
+        if self._is_descendant(focus, self):
+            return
+        if self._popup is not None and self._is_descendant(focus, self._popup):
+            return
+        self._hide_popup()
 
 
 class PokemonEditor(ttk.Frame):
@@ -1872,8 +2047,33 @@ def main() -> None:
     app = SaveEditorApp()
     if "--smoke-test" in sys.argv:
         app._open_default()
+        app.tabs.select(app.pokemon_tab)
+        app.pokemon_editor.sections.select(0)
         app.update()
         app.update_idletasks()
+        combo = app.pokemon_editor.species_combo
+        combo.entry.focus_force()
+        combo.entry.delete(0, "end")
+        for key in ("m", "u"):
+            combo.entry.event_generate(f"<KeyPress-{key}>")
+            combo.entry.event_generate(f"<KeyRelease-{key}>")
+            app.update()
+        if combo.get() != "mu" or not combo._popup_visible() or app.focus_get() is not combo.entry:
+            raise RuntimeError("Searchable dropdown lost focus while typing")
+        combo._hide_popup()
+        combo.set("Mudkip")
+        combo._toggle_popup()
+        app.update()
+        combo.entry.event_generate("<KeyPress-t>")
+        combo.entry.event_generate("<KeyRelease-t>")
+        app.update()
+        if (
+            combo.get() != "t"
+            or "Torchic" not in combo._matches
+            or not combo._popup_visible()
+            or app.focus_get() is not combo.entry
+        ):
+            raise RuntimeError("Arrow-opened searchable dropdown did not accept typing")
         app.destroy()
         return
     app.mainloop()

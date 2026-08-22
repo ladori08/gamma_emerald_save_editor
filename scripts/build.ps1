@@ -41,11 +41,24 @@ try {
     Copy-Item -LiteralPath (Join-Path $tclSource "tk8.6") -Destination $tclStage -Recurse -Force
     $env:TCL_LIBRARY = Join-Path $tclStage "tcl8.6"
     $env:TK_LIBRARY = Join-Path $tclStage "tk8.6"
-    & $python -B -m pytest -q
+    $buildTemp = Join-Path $projectRoot ".build_temp"
+    New-Item -ItemType Directory -Path $buildTemp -Force | Out-Null
+    $env:TEMP = $buildTemp
+    $env:TMP = $buildTemp
+    & $python -B -m pytest -q --basetemp (Join-Path $buildTemp "pytest")
+    if ($LASTEXITCODE -ne 0) {
+        throw "Automated tests failed; build stopped."
+    }
     & $python -m PyInstaller --noconfirm --clean --onedir --windowed --name GammaEmeraldSaveEditor `
         --paths src packaging\gui_launcher.py
+    if ($LASTEXITCODE -ne 0) {
+        throw "GUI build failed."
+    }
     & $python -m PyInstaller --noconfirm --clean --onefile --console --name gamma-save `
         --paths src packaging\cli_launcher.py
+    if ($LASTEXITCODE -ne 0) {
+        throw "CLI build failed."
+    }
     if ($runtimeKey) {
         [IO.File]::WriteAllText(
             (Join-Path $projectRoot "dist\GammaEmeraldSaveEditor\save_key.hex"),

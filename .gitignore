@@ -14,6 +14,7 @@ release/
 samples/private/
 backups/
 .build_tcl/
+.build_temp/
 _tk_test/
 save_key.hex
 .gamma-save-key
