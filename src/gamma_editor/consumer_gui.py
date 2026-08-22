@@ -101,6 +101,25 @@ def exact_choice(values: tuple[str, ...] | list[str], value: object) -> str | No
     return next((choice for choice in values if choice.casefold() == needle), None)
 
 
+def validated_enum_value(field: str, value: object) -> str:
+    """Normalize a searchable catalog selection to the enum string stored by Gamma."""
+    catalogs = {
+        "Gender": GENDERS,
+        "StatusCondition": STATUS_CONDITIONS,
+        "MetType": MET_TYPES,
+    }
+    allowed = catalogs[field]
+    selected = exact_choice(list(allowed), value)
+    if selected is None:
+        labels = {
+            "Gender": "Gender",
+            "StatusCondition": "status condition",
+            "MetType": "met type",
+        }
+        raise ValueError(f"Choose a valid {labels[field]}.")
+    return f"{ENUM_PREFIXES[field]}::{selected}"
+
+
 class SearchableCombobox(ttk.Combobox):
     """Editable ttk combobox whose popup narrows as the user types."""
 
@@ -251,7 +270,7 @@ class PokemonEditor(ttk.Frame):
         ttk.Button(stat_buttons, text="Balanced 510 EV", command=self._balanced_evs).pack(side="left")
         ttk.Checkbutton(
             stat_buttons,
-            text="Allow EV total over 510",
+            text="Allow EV total over 510 (editor only)",
             variable=self.app.allow_ev_over_510,
             command=self._update_ev_total,
         ).pack(side="left", padx=(16, 0))
@@ -411,7 +430,7 @@ class PokemonEditor(ttk.Frame):
 
     def _update_ev_total(self) -> None:
         total = sum(_number(self.vars[field].get()) for field in self.vars if field.endswith("_EV"))
-        suffix = "limit disabled" if self.app.allow_ev_over_510.get() else "max 510"
+        suffix = "editor limit disabled; game-side behavior unverified" if self.app.allow_ev_over_510.get() else "max 510"
         self.ev_total_var.set(f"EV total: {total} ({suffix})")
 
     def _update_calculated_stats(self) -> None:
@@ -597,18 +616,8 @@ class PokemonEditor(ttk.Frame):
                         raw = exact_choice(list(HOLDABLE_ITEM_NAMES), raw)
                         if raw is None:
                             raise ValueError("Choose a valid holdable item.")
-                    elif field == "Gender":
-                        raw = exact_choice(list(GENDERS), raw)
-                        if raw is None:
-                            raise ValueError("Choose a valid Gender.")
-                    elif field == "StatusCondition":
-                        raw = exact_choice(list(STATUS_CONDITIONS), raw)
-                        if raw is None:
-                            raise ValueError("Choose a valid status condition.")
-                    elif field == "MetType":
-                        raw = exact_choice(list(MET_TYPES), raw)
-                        if raw is None:
-                            raise ValueError("Choose a valid met type.")
+                    elif field in {"Gender", "StatusCondition", "MetType"}:
+                        raw = validated_enum_value(field, raw)
                     elif field in ENUM_PREFIXES:
                         raw = f"{ENUM_PREFIXES[field]}::{raw}"
                     value = self.app.coerce_property_value(prop, raw)
@@ -641,18 +650,8 @@ class PokemonEditor(ttk.Frame):
                         raw = exact_choice(list(HOLDABLE_ITEM_NAMES), raw)
                         if raw is None:
                             raise ValueError("Choose a valid holdable item.")
-                    elif field == "Gender":
-                        raw = exact_choice(list(GENDERS), raw)
-                        if raw is None:
-                            raise ValueError("Choose a valid Gender.")
-                    elif field == "StatusCondition":
-                        raw = exact_choice(list(STATUS_CONDITIONS), raw)
-                        if raw is None:
-                            raise ValueError("Choose a valid status condition.")
-                    elif field == "MetType":
-                        raw = exact_choice(list(MET_TYPES), raw)
-                        if raw is None:
-                            raise ValueError("Choose a valid met type.")
+                    elif field in {"Gender", "StatusCondition", "MetType"}:
+                        raw = validated_enum_value(field, raw)
                     elif field in ENUM_PREFIXES:
                         raw = f"{ENUM_PREFIXES[field]}::{raw}"
                     changes[field] = self.app.coerce_property_value(prop, raw)

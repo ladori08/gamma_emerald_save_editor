@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from gamma_editor.catalog import HOLDABLE_ITEM_NAMES, ITEMS_BY_POCKET, calculate_pokemon_stats
-from gamma_editor.consumer_gui import exact_choice, filter_choices
+from gamma_editor.consumer_gui import exact_choice, filter_choices, validated_enum_value
 
 
 STAT_NAMES = ("HP", "Attack", "Defense", "SpecialAttack", "SpecialDefense", "Speed")
@@ -13,6 +13,12 @@ def test_live_search_is_case_insensitive_and_prioritizes_prefixes() -> None:
     assert filter_choices(values, "MAX") == ("Max Potion",)
     assert filter_choices(values, "") == values
     assert exact_choice(list(values), " max potion ") == "Max Potion"
+
+
+def test_searchable_enum_choices_restore_gamma_prefixes() -> None:
+    assert validated_enum_value("Gender", "male") == "EPokemonGender::Male"
+    assert validated_enum_value("StatusCondition", "none") == "ESTATUSEffect::None"
+    assert validated_enum_value("MetType", "gift") == "EPokemonMetType::Gift"
 
 
 def test_torchic_final_stats_include_nature_iv_and_ev() -> None:
