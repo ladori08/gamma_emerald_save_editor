@@ -6,6 +6,30 @@ if (-not (Test-Path -LiteralPath $python)) {
 }
 Push-Location $projectRoot
 try {
+    # Capture the local runtime key before PyInstaller replaces dist. This keeps
+    # repeat local builds directly runnable without publishing the key.
+    $runtimeKey = $env:GAMMA_EMERALD_SAVE_KEY_HEX
+    if (-not $runtimeKey) {
+        $keyCandidates = @(
+            (Join-Path $projectRoot "dist\GammaEmeraldSaveEditor\save_key.hex"),
+            (Join-Path $projectRoot "dist\save_key.hex"),
+            (Join-Path $projectRoot "save_key.hex"),
+            (Join-Path $env:LOCALAPPDATA "GammaEmeraldSaveEditor\save_key.hex")
+        )
+        foreach ($candidate in $keyCandidates) {
+            if (Test-Path -LiteralPath $candidate) {
+                $runtimeKey = Get-Content -LiteralPath $candidate -Raw
+                break
+            }
+        }
+    }
+    if ($runtimeKey) {
+        $runtimeKey = ($runtimeKey -replace '\s', '')
+        if ($runtimeKey -notmatch '^[0-9a-fA-F]{64}$') {
+            throw "GAMMA_EMERALD_SAVE_KEY_HEX/save_key.hex must contain exactly 64 hexadecimal characters."
+        }
+    }
+
     # Some managed Windows accounts cannot initialize Tcl from another user's
     # Python directory. Stage the installed Tcl/Tk library inside the project
     # so PyInstaller can inspect and bundle it reliably.
@@ -22,12 +46,7 @@ try {
         --paths src packaging\gui_launcher.py
     & $python -m PyInstaller --noconfirm --clean --onefile --console --name gamma-save `
         --paths src packaging\cli_launcher.py
-    $runtimeKey = $env:GAMMA_EMERALD_SAVE_KEY_HEX
     if ($runtimeKey) {
-        $runtimeKey = ($runtimeKey -replace '\s', '')
-        if ($runtimeKey -notmatch '^[0-9a-fA-F]{64}$') {
-            throw "GAMMA_EMERALD_SAVE_KEY_HEX must contain exactly 64 hexadecimal characters."
-        }
         [IO.File]::WriteAllText(
             (Join-Path $projectRoot "dist\GammaEmeraldSaveEditor\save_key.hex"),
             $runtimeKey,
@@ -39,6 +58,12 @@ try {
             [Text.Encoding]::ASCII
         )
     }
+
+    $workspaceRoot = Split-Path -Parent $projectRoot
+    $launcherTemplate = Join-Path $projectRoot "packaging\root_launcher.cmd"
+    $launcherTarget = Join-Path $workspaceRoot "GammaEmeraldSaveEditor.cmd"
+    Copy-Item -LiteralPath $launcherTemplate -Destination $launcherTarget -Force
+    Write-Output "Root launcher refreshed: $launcherTarget"
 } finally {
     Pop-Location
 }
