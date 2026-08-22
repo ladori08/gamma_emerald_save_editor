@@ -15,6 +15,7 @@ from .catalog import (
     HOLDABLE_ITEM_NAMES,
     HOENN_DEX,
     ITEMS_BY_POCKET,
+    ITEM_BY_NAME,
     ITEM_NAMES,
     MET_TYPES,
     MOVES,
@@ -28,6 +29,7 @@ from .catalog import (
     STATUS_CONDITIONS,
     TYPE_COLORS,
     TYPE_ORDER,
+    calculate_pokemon_stats,
     display_name,
     nature_label,
     type_defenses,
@@ -80,6 +82,60 @@ def _number(value: object, fallback: int = 0) -> int:
         return int(float(value))
     except (TypeError, ValueError):
         return fallback
+
+
+def filter_choices(values: tuple[str, ...] | list[str], query: str) -> tuple[str, ...]:
+    """Case-insensitive live-search with prefix matches before contains matches."""
+    needle = query.strip().casefold()
+    source = tuple(values)
+    if not needle:
+        return source
+    prefix = [value for value in source if value.casefold().startswith(needle)]
+    contains = [value for value in source if needle in value.casefold() and value not in prefix]
+    return tuple((*prefix, *contains))
+
+
+def exact_choice(values: tuple[str, ...] | list[str], value: object) -> str | None:
+    """Return the catalog spelling for a case-insensitive exact user entry."""
+    needle = str(value).strip().casefold()
+    return next((choice for choice in values if choice.casefold() == needle), None)
+
+
+class SearchableCombobox(ttk.Combobox):
+    """Editable ttk combobox whose popup narrows as the user types."""
+
+    _NAVIGATION_KEYS = {
+        "Up", "Down", "Left", "Right", "Home", "End", "Prior", "Next",
+        "Return", "Escape", "Tab", "Shift_L", "Shift_R", "Control_L", "Control_R",
+    }
+
+    def __init__(self, parent, *, values=(), **kwargs) -> None:
+        self._source_values = tuple(str(value) for value in values)
+        kwargs.pop("state", None)
+        super().__init__(parent, values=self._source_values, state="normal", **kwargs)
+        self.bind("<KeyRelease>", self._on_key_release, add="+")
+        self.bind("<ButtonPress-1>", self._on_button_press, add="+")
+        self.bind("<Escape>", lambda _event: self.configure(values=self._source_values), add="+")
+
+    def set_source_values(self, values, *, enabled: bool = True) -> None:
+        self._source_values = tuple(str(value) for value in values)
+        self.configure(values=self._source_values, state="normal" if enabled else "disabled")
+
+    def _on_button_press(self, event) -> None:
+        if event.x >= max(0, self.winfo_width() - 24):
+            self.configure(values=self._source_values)
+
+    def _on_key_release(self, event) -> None:
+        if event.keysym in self._NAVIGATION_KEYS or str(self.cget("state")) == "disabled":
+            return
+        matches = filter_choices(self._source_values, self.get())
+        self.configure(values=matches)
+        if matches:
+            self.after_idle(self._post_dropdown)
+
+    def _post_dropdown(self) -> None:
+        if self.focus_get() is self and str(self.cget("state")) != "disabled":
+            self.event_generate("<Down>")
 
 
 class PokemonEditor(ttk.Frame):
@@ -140,10 +196,14 @@ class PokemonEditor(ttk.Frame):
 
         self.species_combo = self._choice(main, "Species", "SpeciesData", [item.name for item in SPECIES], 0, 0)
         self.species_combo.bind("<<ComboboxSelected>>", self._on_species_changed)
+        self.vars["SpeciesData"].trace_add("write", lambda *_args: self._on_species_text_changed())
         self._entry(main, "Nickname", "Nickname", 0, 2)
         self._spin(main, "Level", "Level", 1, 0, 1, 100)
+        self.vars["Level"].trace_add("write", lambda *_args: self._update_calculated_stats())
         self._entry(main, "EXP", "CurrentEXP", 1, 2)
         self.nature_combo = self._choice(main, "Nature", "Nature", list(NATURE_LABELS), 2, 0)
+        self.nature_combo.bind("<<ComboboxSelected>>", lambda _event: self._update_calculated_stats())
+        self.vars["Nature"].trace_add("write", lambda *_args: self._update_calculated_stats())
         self._choice(main, "Gender", "Gender", list(GENDERS), 2, 2)
         self.ability_combo = self._choice(main, "Ability", "Ability", [], 3, 0)
         self.ability_combo.bind("<<ComboboxSelected>>", self._on_ability_changed)
@@ -154,7 +214,7 @@ class PokemonEditor(ttk.Frame):
         self._check(main, "Fainted", "bIsFainted", 5, 2)
         ttk.Label(
             main,
-            text="Ability choices are filtered by Species; (H) marks a Hidden Ability. Species changes do not auto-recalculate HP or stats.",
+            text="Type to live-search any dropdown. Ability is Species-filtered; (H) marks a Hidden Ability.",
             style="Muted.TLabel",
             wraplength=720,
         ).grid(row=6, column=0, columnspan=4, sticky="w", pady=(14, 0))
@@ -162,20 +222,30 @@ class PokemonEditor(ttk.Frame):
         self._entry(stats, "Current HP", "CurrentHP", 0, 0)
         self._entry(stats, "Max HP", "MaxHP", 0, 2)
         stat_names = ("HP", "Attack", "Defense", "SpecialAttack", "SpecialDefense", "Speed")
+        self.base_stat_vars = {stat: tk.StringVar(value="—") for stat in stat_names}
+        self.final_stat_vars = {stat: tk.StringVar(value="—") for stat in stat_names}
+        self.sync_calculated_hp = tk.BooleanVar(value=True)
         ttk.Label(stats, text="Stat", style="Bold.TLabel").grid(row=2, column=0, sticky="w", pady=(12, 4))
-        ttk.Label(stats, text="IV (0–31)", style="Bold.TLabel").grid(row=2, column=1, sticky="w", pady=(12, 4))
-        ttk.Label(stats, text="EV (0–252)", style="Bold.TLabel").grid(row=2, column=2, sticky="w", pady=(12, 4))
+        ttk.Label(stats, text="Base", style="Bold.TLabel").grid(row=2, column=1, sticky="w", pady=(12, 4))
+        ttk.Label(stats, text="IV (0–31)", style="Bold.TLabel").grid(row=2, column=2, sticky="w", pady=(12, 4))
+        ttk.Label(stats, text="EV (0–252)", style="Bold.TLabel").grid(row=2, column=3, sticky="w", pady=(12, 4))
+        ttk.Label(stats, text="Final", style="Bold.TLabel").grid(row=2, column=4, sticky="w", pady=(12, 4))
         for row, stat in enumerate(stat_names, start=3):
             ttk.Label(stats, text=display_name(stat)).grid(row=row, column=0, sticky="w", pady=3)
+            ttk.Label(stats, textvariable=self.base_stat_vars[stat], width=8).grid(row=row, column=1, sticky="w", pady=3)
             iv = tk.StringVar()
             ev = tk.StringVar()
             self.vars[stat + "_IV"] = iv
             self.vars[stat + "_EV"] = ev
-            ev.trace_add("write", lambda *_args: self._update_ev_total())
-            ttk.Spinbox(stats, textvariable=iv, from_=0, to=31, width=10).grid(row=row, column=1, sticky="w", pady=3)
-            ttk.Spinbox(stats, textvariable=ev, from_=0, to=252, width=10).grid(row=row, column=2, sticky="w", pady=3)
+            iv.trace_add("write", lambda *_args: self._update_calculated_stats())
+            ev.trace_add("write", lambda *_args: (self._update_ev_total(), self._update_calculated_stats()))
+            ttk.Spinbox(stats, textvariable=iv, from_=0, to=31, width=10).grid(row=row, column=2, sticky="w", pady=3)
+            ttk.Spinbox(stats, textvariable=ev, from_=0, to=252, width=10).grid(row=row, column=3, sticky="w", pady=3)
+            ttk.Label(stats, textvariable=self.final_stat_vars[stat], style="Bold.TLabel", width=8).grid(
+                row=row, column=4, sticky="w", pady=3
+            )
         stat_buttons = ttk.Frame(stats)
-        stat_buttons.grid(row=10, column=0, columnspan=4, sticky="w", pady=(12, 0))
+        stat_buttons.grid(row=10, column=0, columnspan=5, sticky="w", pady=(12, 0))
         ttk.Button(stat_buttons, text="Max IVs", command=lambda: self._fill_stats("IV", 31)).pack(side="left")
         ttk.Button(stat_buttons, text="Clear EVs", command=lambda: self._fill_stats("EV", 0)).pack(side="left", padx=6)
         ttk.Button(stat_buttons, text="Balanced 510 EV", command=self._balanced_evs).pack(side="left")
@@ -185,9 +255,19 @@ class PokemonEditor(ttk.Frame):
             variable=self.app.allow_ev_over_510,
             command=self._update_ev_total,
         ).pack(side="left", padx=(16, 0))
+        ttk.Checkbutton(
+            stat_buttons,
+            text="Sync calculated Max HP",
+            variable=self.sync_calculated_hp,
+            command=self._update_calculated_stats,
+        ).pack(side="left", padx=(16, 0))
         self.ev_total_var = tk.StringVar(value="EV total: 0 / 510")
         ttk.Label(stats, textvariable=self.ev_total_var, style="Muted.TLabel").grid(
-            row=11, column=0, columnspan=4, sticky="w", pady=(8, 0)
+            row=11, column=0, columnspan=5, sticky="w", pady=(8, 0)
+        )
+        self.stat_formula_var = tk.StringVar(value="Choose a mapped Species to calculate final stats.")
+        ttk.Label(stats, textvariable=self.stat_formula_var, style="Muted.TLabel", wraplength=760).grid(
+            row=12, column=0, columnspan=5, sticky="w", pady=(6, 0)
         )
 
         ttk.Label(moves, text="Move", style="Bold.TLabel").grid(row=0, column=0, sticky="w")
@@ -195,7 +275,7 @@ class PokemonEditor(ttk.Frame):
         ttk.Label(moves, text="Max PP", style="Bold.TLabel").grid(row=0, column=2, sticky="w")
         move_values = [""] + [item.name for item in MOVES]
         for index in range(4):
-            ttk.Combobox(moves, textvariable=self.move_vars[index], values=move_values, state="readonly", width=30).grid(
+            SearchableCombobox(moves, textvariable=self.move_vars[index], values=move_values, width=30).grid(
                 row=index + 1, column=0, sticky="ew", padx=(0, 8), pady=5
             )
             ttk.Spinbox(moves, textvariable=self.current_pp_vars[index], from_=0, to=99, width=10).grid(
@@ -251,11 +331,11 @@ class PokemonEditor(ttk.Frame):
             row=row, column=column + 1, sticky="ew", padx=(0, 14), pady=5
         )
 
-    def _choice(self, parent, label: str, field: str, values: list[str], row: int, column: int) -> ttk.Combobox:
+    def _choice(self, parent, label: str, field: str, values: list[str], row: int, column: int) -> SearchableCombobox:
         var = tk.StringVar()
         self.vars[field] = var
         ttk.Label(parent, text=label).grid(row=row, column=column, sticky="w", padx=(0, 6), pady=5)
-        widget = ttk.Combobox(parent, textvariable=var, values=values, state="readonly")
+        widget = SearchableCombobox(parent, textvariable=var, values=values)
         widget.grid(row=row, column=column + 1, sticky="ew", padx=(0, 14), pady=5)
         return widget
 
@@ -272,7 +352,7 @@ class PokemonEditor(ttk.Frame):
         info = SPECIES_INFO.get(species_name.casefold())
         if info is None or not info.abilities:
             current = str(self.vars["Ability"].get()).strip() or "None"
-            self.ability_combo.configure(values=(current,), state="readonly")
+            self.ability_combo.set_source_values((current,))
             self.vars["Ability"].set(current)
             if choose_default or not self.vars["AbilitySlot"].get():
                 self.vars["AbilitySlot"].set("0")
@@ -287,13 +367,20 @@ class PokemonEditor(ttk.Frame):
         )
         if selected is None and (choose_default or not current):
             selected = info.abilities[0]
-        self.ability_combo.configure(values=labels, state="readonly")
+        self.ability_combo.set_source_values(labels)
         if selected is not None:
             self.vars["Ability"].set(selected.label)
             self.vars["AbilitySlot"].set(str(selected.slot))
 
     def _on_species_changed(self, _event=None) -> None:
         self._refresh_species_dependent(choose_default=True)
+        self._update_calculated_stats()
+
+    def _on_species_text_changed(self) -> None:
+        species_name = str(self.vars["SpeciesData"].get()).strip()
+        if species_name.casefold() in SPECIES_BY_NAME:
+            self._refresh_species_dependent(choose_default=False)
+        self._update_calculated_stats()
 
     def _on_ability_changed(self, _event=None) -> None:
         info = SPECIES_INFO.get(str(self.vars["SpeciesData"].get()).strip().casefold())
@@ -327,18 +414,63 @@ class PokemonEditor(ttk.Frame):
         suffix = "limit disabled" if self.app.allow_ev_over_510.get() else "max 510"
         self.ev_total_var.set(f"EV total: {total} ({suffix})")
 
+    def _update_calculated_stats(self) -> None:
+        if not hasattr(self, "final_stat_vars"):
+            return
+        stat_names = ("HP", "Attack", "Defense", "SpecialAttack", "SpecialDefense", "Speed")
+        species_name = str(self.vars["SpeciesData"].get()).strip()
+        species = SPECIES_BY_NAME.get(species_name.casefold())
+        info = SPECIES_INFO.get(species_name.casefold())
+        if species is None or info is None:
+            for stat in stat_names:
+                self.base_stat_vars[stat].set("—")
+                self.final_stat_vars[stat].set("—")
+            self.stat_formula_var.set("Choose a mapped Species to calculate final stats.")
+            return
+        for stat in stat_names:
+            self.base_stat_vars[stat].set(str(info.base_stats[stat]))
+        try:
+            level = int(self.vars["Level"].get())
+            nature = NATURE_BY_LABEL.get(str(self.vars["Nature"].get()).strip().casefold())
+            if nature is None:
+                raise ValueError("Choose a Nature to calculate final stats.")
+            ivs = {stat: int(self.vars[stat + "_IV"].get()) for stat in stat_names}
+            evs = {stat: int(self.vars[stat + "_EV"].get()) for stat in stat_names}
+            calculated = calculate_pokemon_stats(species.name, level, nature, ivs, evs)
+        except (TypeError, ValueError) as exc:
+            for stat in stat_names:
+                self.final_stat_vars[stat].set("—")
+            self.stat_formula_var.set(str(exc))
+            return
+        for stat in stat_names:
+            self.final_stat_vars[stat].set(str(calculated[stat]))
+        self.stat_formula_var.set(
+            f"Final stats at Lv. {level} with {nature_label(nature)}. "
+            "Gamma stores Level/Nature/IV/EV; only Max HP is persisted as a final stat."
+        )
+        if self.sync_calculated_hp.get():
+            calculated_hp = calculated["HP"]
+            old_current_hp = _number(self.vars["CurrentHP"].get(), calculated_hp)
+            if self.current is not None and not self.current.occupied:
+                old_current_hp = calculated_hp
+            self.vars["MaxHP"].set(str(calculated_hp))
+            self.vars["CurrentHP"].set(str(min(max(0, old_current_hp), calculated_hp)))
+
     def load(self, pokemon: PokemonView | None) -> None:
         self.current = pokemon
         if pokemon is None:
+            self.sync_calculated_hp.set(False)
             self.heading_var.set(f"{self.title_text}: select a slot")
             for var in self.vars.values():
                 var.set(False if isinstance(var, tk.BooleanVar) else "")
             for var in (*self.move_vars, *self.current_pp_vars, *self.max_pp_vars):
                 var.set("")
             self.apply_button.configure(state="disabled")
+            self._update_calculated_stats()
             self._draw_preview(None)
             return
         if not pokemon.occupied:
+            self.sync_calculated_hp.set(True)
             document = self.app.current_document()
             if document is None:
                 self.apply_button.configure(state="disabled")
@@ -367,9 +499,11 @@ class PokemonEditor(ttk.Frame):
             self.apply_button.configure(text="Create Pokemon", state="normal")
             self._refresh_species_dependent(choose_default=False)
             self._update_ev_total()
+            self._update_calculated_stats()
             self._draw_preview(None)
             return
         fields = pokemon.fields
+        self.sync_calculated_hp.set(False)
         self.heading_var.set(f"{self.title_text}: Slot {pokemon.slot_index + 1} — {pokemon.species}")
         for field, var in self.vars.items():
             value = fields.get(field, "")
@@ -394,6 +528,7 @@ class PokemonEditor(ttk.Frame):
         self.apply_button.configure(text="Apply staged changes", state="normal")
         self._refresh_species_dependent(choose_default=False)
         self._update_ev_total()
+        self._update_calculated_stats()
         self._draw_preview(pokemon)
 
     def _draw_preview(self, pokemon: PokemonView | None) -> None:
@@ -453,11 +588,27 @@ class PokemonEditor(ttk.Frame):
                     elif field == "Ability":
                         info = SPECIES_INFO.get(str(self.vars["SpeciesData"].get()).strip().casefold())
                         choice = next(
-                            (item for item in info.abilities if item.label == raw), None
+                            (item for item in info.abilities if item.label.casefold() == str(raw).casefold()), None
                         ) if info else None
                         if info and choice is None:
                             raise ValueError("Choose an Ability valid for the selected Species.")
                         raw = f"EPokemonAbility::{choice.enum_name if choice else raw}"
+                    elif field == "HeldItem":
+                        raw = exact_choice(list(HOLDABLE_ITEM_NAMES), raw)
+                        if raw is None:
+                            raise ValueError("Choose a valid holdable item.")
+                    elif field == "Gender":
+                        raw = exact_choice(list(GENDERS), raw)
+                        if raw is None:
+                            raise ValueError("Choose a valid Gender.")
+                    elif field == "StatusCondition":
+                        raw = exact_choice(list(STATUS_CONDITIONS), raw)
+                        if raw is None:
+                            raise ValueError("Choose a valid status condition.")
+                    elif field == "MetType":
+                        raw = exact_choice(list(MET_TYPES), raw)
+                        if raw is None:
+                            raise ValueError("Choose a valid met type.")
                     elif field in ENUM_PREFIXES:
                         raw = f"{ENUM_PREFIXES[field]}::{raw}"
                     value = self.app.coerce_property_value(prop, raw)
@@ -481,11 +632,27 @@ class PokemonEditor(ttk.Frame):
                     elif field == "Ability":
                         info = SPECIES_INFO.get(str(self.vars["SpeciesData"].get()).strip().casefold())
                         choice = next(
-                            (item for item in info.abilities if item.label == raw), None
+                            (item for item in info.abilities if item.label.casefold() == str(raw).casefold()), None
                         ) if info else None
                         if info and choice is None:
                             raise ValueError("Choose an Ability valid for the selected Species.")
                         raw = f"EPokemonAbility::{choice.enum_name if choice else raw}"
+                    elif field == "HeldItem":
+                        raw = exact_choice(list(HOLDABLE_ITEM_NAMES), raw)
+                        if raw is None:
+                            raise ValueError("Choose a valid holdable item.")
+                    elif field == "Gender":
+                        raw = exact_choice(list(GENDERS), raw)
+                        if raw is None:
+                            raise ValueError("Choose a valid Gender.")
+                    elif field == "StatusCondition":
+                        raw = exact_choice(list(STATUS_CONDITIONS), raw)
+                        if raw is None:
+                            raise ValueError("Choose a valid status condition.")
+                    elif field == "MetType":
+                        raw = exact_choice(list(MET_TYPES), raw)
+                        if raw is None:
+                            raise ValueError("Choose a valid met type.")
                     elif field in ENUM_PREFIXES:
                         raw = f"{ENUM_PREFIXES[field]}::{raw}"
                     changes[field] = self.app.coerce_property_value(prop, raw)
@@ -502,8 +669,8 @@ class PokemonEditor(ttk.Frame):
             species_change = species if species.name != pokemon.species else None
             if pokemon.occupied and species_change and not messagebox.askyesno(
                 APP_TITLE,
-                "Change Species DataAsset?\n\nGamma does not store enough verified base-stat metadata for automatic "
-                "recalculation yet. Review HP, ability and moves before saving.",
+                "Change Species DataAsset?\n\nReview the calculated Stats tab, Ability, Max HP sync option and moves "
+                "before saving.",
             ):
                 return
 
@@ -774,7 +941,7 @@ class SaveEditorApp(tk.Tk):
         ttk.Label(editor, text="Pocket").grid(row=1, column=0, sticky="w", pady=(14, 5))
         ttk.Label(editor, textvariable=self.bag_pocket_var, style="Bold.TLabel").grid(row=1, column=1, sticky="w", pady=(14, 5))
         ttk.Label(editor, text="Item").grid(row=2, column=0, sticky="w", pady=5)
-        self.bag_name_combo = ttk.Combobox(editor, textvariable=self.bag_name_var, state="readonly")
+        self.bag_name_combo = SearchableCombobox(editor, textvariable=self.bag_name_var)
         self.bag_name_combo.grid(row=2, column=1, sticky="ew", pady=5)
         ttk.Label(editor, text="Quantity").grid(row=3, column=0, sticky="w", pady=5)
         ttk.Spinbox(editor, textvariable=self.bag_qty_var, from_=1, to=9999).grid(row=3, column=1, sticky="ew", pady=5)
@@ -1264,7 +1431,7 @@ class SaveEditorApp(tk.Tk):
         self.selected_bag_entry = item
         self.selected_bag_prefix = item.prefix
         self.bag_pocket_var.set(BAG_POCKET_LABELS.get(pocket, pocket))
-        self.bag_name_combo.configure(values=[choice.name for choice in ITEMS_BY_POCKET[pocket]])
+        self.bag_name_combo.set_source_values([choice.name for choice in ITEMS_BY_POCKET[pocket]])
         self.bag_name_var.set(item.name)
         self.bag_qty_var.set(str(item.quantity))
         self.bag_apply_button.configure(state="normal")
@@ -1285,7 +1452,8 @@ class SaveEditorApp(tk.Tk):
         pocket_combo = ttk.Combobox(dialog, textvariable=pocket_var, values=labels, state="readonly", width=28)
         pocket_combo.grid(row=0, column=1, sticky="ew", padx=(0, 12), pady=(14, 6))
         ttk.Label(dialog, text="Item").grid(row=1, column=0, sticky="w", padx=12, pady=6)
-        item_combo = ttk.Combobox(dialog, textvariable=item_var, state="disabled", width=28)
+        item_combo = SearchableCombobox(dialog, textvariable=item_var, width=28)
+        item_combo.set_source_values((), enabled=False)
         item_combo.grid(row=1, column=1, sticky="ew", padx=(0, 12), pady=6)
         ttk.Label(dialog, text="Quantity").grid(row=2, column=0, sticky="w", padx=12, pady=6)
         ttk.Spinbox(dialog, textvariable=qty_var, from_=1, to=9999, width=29).grid(
@@ -1295,21 +1463,22 @@ class SaveEditorApp(tk.Tk):
         def pocket_changed(_event=None) -> None:
             pocket = label_to_pocket.get(pocket_var.get())
             item_var.set("")
-            item_combo.configure(
-                state="readonly" if pocket else "disabled",
-                values=[choice.name for choice in ITEMS_BY_POCKET[pocket]] if pocket else (),
+            item_combo.set_source_values(
+                [choice.name for choice in ITEMS_BY_POCKET[pocket]] if pocket else (),
+                enabled=bool(pocket),
             )
 
         def add() -> None:
             doc = self.current_document()
             pocket = label_to_pocket.get(pocket_var.get())
-            if doc is None or pocket is None or not item_var.get():
+            selected_item = ITEM_BY_NAME.get(item_var.get().strip().casefold())
+            if doc is None or pocket is None or selected_item is None or selected_item.pocket != pocket:
                 messagebox.showerror(APP_TITLE, "Choose a pocket and an item.", parent=dialog)
                 return
             try:
-                self.working_gvas = add_bag_item(doc, pocket, item_var.get(), int(qty_var.get()))
+                self.working_gvas = add_bag_item(doc, pocket, selected_item.name, int(qty_var.get()))
                 dialog.destroy()
-                self._mark_staged(f"Staged add/update: {item_var.get()}")
+                self._mark_staged(f"Staged add/update: {selected_item.name}")
             except (ValueError, GammaEditorError) as exc:
                 messagebox.showerror(APP_TITLE, str(exc), parent=dialog)
 
@@ -1591,7 +1760,10 @@ class SaveEditorApp(tk.Tk):
             return
         try:
             quantity = int(self.bag_qty_var.get())
-            item_name = self.bag_name_var.get().strip()
+            selected_item = ITEM_BY_NAME.get(self.bag_name_var.get().strip().casefold())
+            if selected_item is None or selected_item.pocket != item.category:
+                raise ValueError(f"Choose a valid item from the {BAG_POCKET_LABELS[item.category]} pocket.")
+            item_name = selected_item.name
             if item_name == item.name and quantity == item.quantity:
                 self.status_var.set("Bag: no changes to stage")
                 return

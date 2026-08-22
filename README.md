@@ -48,7 +48,7 @@ gamma-save slot-filename PokemonSaveSlot
 
 ## Editor workspace
 
-Version 0.6 uses an Indigo-style consumer workspace instead of exposing raw schema rows:
+Version 0.7 uses an Indigo-style consumer workspace instead of exposing raw schema rows:
 
 - Trainer form with synchronized Trainer name/ID edits.
 - One Pokémon tab combines six Party cards with a compact 5 × 6 current-Box grid. Dragging cards
@@ -59,12 +59,18 @@ Version 0.6 uses an Indigo-style consumer workspace instead of exposing raw sche
 - Verified GE-1.0.0 catalogs containing 118 Species DataAssets and 99 Move Blueprints.
 - Species-aware editing for 116 standard species: Ability is filtered to legal normal/hidden
   choices (`(H)` marks Hidden Ability), and Nature labels show their raised/lowered stats.
+- Species, Nature, Ability, Held Item, Move and Bag Item dropdowns support case-insensitive live
+  search while preserving exact catalog validation.
+- The Stats panel shows Base and calculated Final HP/Attack/Defense/Sp. Atk/Sp. Def/Speed live from
+  Species, Level, Nature, IVs and EVs. Calculated Max HP synchronization is opt-in for existing
+  Pokémon and enabled by default only while creating one.
 - Held Item choices are restricted to the Gamma items that carry hold/Fling semantics; Poké Balls
   and Key Items are excluded.
 - Pokémon preview cards, HP bar, IV/EV helpers, optional EV-total limit override, four move/PP rows
   and staged-change workflow.
 - Bag pocket tabs for Items, Poké Balls, TMs, Berries and Key Items, with filtered add/edit/remove
-  controls. Missing pockets and item rows are inserted through verified structured-array resizing.
+  controls. Missing pockets and item rows are inserted through verified structured-array resizing;
+  the Items catalog includes Max Revive.
 - Pokédex species lookup shows Gamma catalog identity, types, legal Abilities, height/weight,
   six base stats, all 18 incoming type multipliers, DataAsset and owned Party/Storage locations;
   it is independent from Seen/Caught save progress.

@@ -42,6 +42,9 @@ Status legend: `[x]` verified, `[~]` implemented/awaiting final verification, `[
 - [x] Restrict Held Item choices to hold/Fling-compatible item groups.
 - [x] Expand Pokédex with Abilities, base stats and incoming type defenses.
 - [x] Batch Pokémon edit/create/move serialization to remove multi-reparse UI stalls.
+- [x] Add catalog-validated live search to Species, Item, Nature, Ability and Move dropdowns.
+- [x] Show live Base/Final stats calculated from Species, Level, Nature, IVs and EVs.
+- [x] Add Max Revive to the Items/holdable catalogs and verify an in-memory real-story edit.
 - [ ] Add Gamma-verified team-builder, damage-calculator and custom-item workflows.
 
 ## Verification and delivery
@@ -49,6 +52,6 @@ Status legend: `[x]` verified, `[~]` implemented/awaiting final verification, `[
 - [x] Complete automated unit tests and real-options-save read-only test.
 - [x] Verify story-save edit -> game load -> resave cycle.
 - [x] Build Windows executable and smoke-test it.
-- [x] Package and smoke-test the tool-only v0.6.0 local release against the real story save.
+- [x] Package and smoke-test the tool-only v0.7.0 local release against the real story save.
 - [x] Publish a sanitized clean history with external key provisioning and draft PR.
 - [ ] Tag the first verified release.

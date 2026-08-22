@@ -223,3 +223,26 @@ The real fixture passed container integrity and semantic encode/decode round-tri
   ZIP, and verified the release CLI against the real story save. No key was added to Git/GitHub.
 - Runnable local v0.6.0 ZIP SHA-256:
   `A6F6814A488431F5C149E50BD5B7E59E8E45BED577A698FF563EA454D2A6ADCF`.
+
+## 2026-08-22 — Searchable catalogs and calculated stats
+
+- User requested case-insensitive live search in large Species/Item dropdowns, visible final stats
+  driven by Species/Level/Nature/IV/EV, and the missing Max Revive item for v0.7.
+- Added one reusable searchable combobox to Species, Nature, Gender, Ability, Held Item, status,
+  met type, Move and Bag Item controls. Typed values still require an exact catalog match on apply.
+- Added standard integer stat formulas, including Nature multipliers and Shedinja's fixed 1 HP.
+  The Stats panel now shows Base/IV/EV/Final columns and updates live. Existing Pokémon do not have
+  stored Max HP changed implicitly; synchronization is opt-in, while creation enables it by default.
+- Added Max Revive to the Items pocket and holdable catalog. A real-story Revive-to-Max-Revive edit
+  reparsed in memory successfully; the live save was not written.
+- The user authorized stopping `GammaEmeraldSaveEditor` for testing. PID 14816 was stopped before
+  the build; the Pokémon game process was not touched.
+- Automated tests pass: 32. Packaged CLI passed real-story GES1/AES/SHA-1/GVAS round-trip validation,
+  and the packaged GUI remained healthy during an 8-second hidden smoke test.
+- A source-GUI real-story assertion loaded Mudkip, populated all six calculated Final stats and
+  confirmed the searchable Held Item catalog contains Max Revive.
+- Built runnable local v0.7.0. GUI SHA-256:
+  `10F778584B1289FEC096131F41274AE335CCB1FE386676A980491781EC9978A5`.
+- v0.7.0 CLI SHA-256: `BC8AAEDE87F03B828DA40DCD7904A77725838C576F4E7FE1484D86B71113CDBA`.
+- Runnable local v0.7.0 ZIP SHA-256:
+  `B9F7AA832E23507C65E8F94B76605157CD06BEF370C981A6C629942B328ECAF3`.

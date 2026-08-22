@@ -6,14 +6,14 @@ Last updated: 2026-08-22
 
 1. Story/Quest/Berry/Options all exist and validate. Private unpacked fixtures under
    `samples/private` are ignored and must never be committed.
-2. Current parser baseline: 22,482 story records, no parser error; 28 automated tests.
+2. Current parser baseline: 22,482 story records, no parser error; 32 automated tests.
 3. Current branch is `feat/story-save-schema`; v0.6 species-aware editor source is published on
    the existing draft PR as remote commit `814bc53b4dac46a9f8be36ea5f8aa7d536b5b451`.
 4. Repository `ladori08/gamma_emerald_save_editor` is public, and the user explicitly approved
    public publication on 2026-08-21.
 5. Publish the initial main history, publish the feature branch, and use a draft PR unless the user
    explicitly requests otherwise.
-6. Local v0.6.0 is built under `release`; packaged GUI/CLI pass smoke/read-only validation against
+6. Local v0.7.0 is built under `release`; packaged GUI/CLI pass smoke/read-only validation against
    the story save. No v0.6 structural live write was attempted.
 7. The first controlled live write changed Potion quantity 2 -> 3 and passed backup, atomic-write,
    visual game load, normal in-game resave, 22,479-record reparse and packaged CLI validation.
@@ -43,6 +43,13 @@ Last updated: 2026-08-22
 17. After the first local v0.6 launch reported a missing runtime key, the ignored release folder
     and local ZIP were provisioned with `save_key.hex` beside GUI/CLI. Release CLI validation then
     passed. The key remains excluded from Git and GitHub.
+18. v0.7 makes all large catalog dropdowns editable with case-insensitive live filtering and exact
+    catalog validation. The Stats tab calculates Base/Final stats live from Species/Level/Nature/
+    IV/EV and optionally synchronizes stored Max HP. Max Revive was added to Items.
+19. The v0.7 automated suite passes 32 tests; the packaged GUI smoke test and packaged CLI real-story
+    validation pass. Revive-to-Max-Revive also reparses in memory with no live-save write.
+20. The user explicitly authorized killing only `GammaEmeraldSaveEditor` when tests/builds need it;
+    do not infer permission to stop the game process.
 
 ## Local identifiers
 

@@ -13,7 +13,7 @@ Last updated: 2026-08-22
 - GUI, CLI, guarded write/backup service, diagnostics and schema-aware editor implemented.
 - Story GVAS recursively parses more than 22,000 tagged records with no parser error, including
   Party, 14 boxes, Daycare, Bag, Seen/Caught and progress fields.
-- The v0.6 consumer GUI has four focused tabs: Trainer, Pokémon, Bag and Pokédex. Party and Storage
+- The v0.7 consumer GUI has four focused tabs: Trainer, Pokémon, Bag and Pokédex. Party and Storage
   share one workspace with six Party cards, a compact 5 × 6 Box grid and complete-payload drag/drop.
 - Empty Party and Storage cards now open a Create Pokemon form. Creation activates the game's
   complete verified empty struct template, assigns a collision-free Pokemon ID and current Trainer
@@ -27,13 +27,20 @@ Last updated: 2026-08-22
   `(H)` Hidden Ability labels and synchronized slots; Nature labels show stat effects. Gecqua and
   MissingNo. remain explicitly game-specific/unmapped rather than receiving fabricated metadata.
 - Held Item choices use the verified hold/Fling item groups and exclude Poké Balls and Key Items.
+- Catalog-backed Species, Nature, Ability, Held Item, Move and Bag Item controls now support
+  case-insensitive live search while retaining exact-value validation.
+- The Pokémon Stats panel shows Base and live calculated Final stats from Species, Level, Nature,
+  IVs and EVs. Existing records preserve stored HP unless the Max HP sync option is enabled; new
+  Pokémon enable calculated Max HP synchronization by default.
+- Max Revive is available in the Items pocket and holdable-item catalog; a real-story in-memory
+  Revive-to-Max-Revive mutation reparsed successfully without writing the live save.
 - Pokédex now shows types, Abilities, height/weight, base stats and all 18 incoming type multipliers.
 - Pokémon edit/create/move uses a one-pass property transaction. Real-story timings measured about
   0.78 s edit, 0.94 s Storage create, 2.49 s Party create and 1.03 s Storage-to-Party move.
-- Automated suite passes: 28 tests plus real-story in-memory Bag insertion/removal, Party/Storage
+- Automated suite passes: 32 tests plus real-story in-memory Bag insertion/removal, Party/Storage
   payload movement, empty-slot creation, EV-limit override and encrypt/decrypt verification.
-- Packaged v0.6 GUI and CLI both pass smoke/read-only validation against the real story save.
-- The ignored local v0.6 release is provisioned with `save_key.hex` beside both launchers so it runs
+- Packaged v0.7 GUI and CLI both pass smoke/read-only validation against the real story save.
+- The ignored local v0.7 release is provisioned with `save_key.hex` beside both launchers so it runs
   directly on this machine. The key remains absent from Git tracking and GitHub publication.
 - Local git repository initialized on `main`; initial implementation commit is `39bbe27`.
 - GitHub repository `ladori08/gamma_emerald_save_editor` exists and admin/push access is verified.

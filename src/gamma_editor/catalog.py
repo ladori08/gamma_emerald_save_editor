@@ -342,7 +342,7 @@ BAG_POCKET_LABELS = {
 
 _ITEMS_BY_POCKET: dict[str, tuple[str, ...]] = {
     "Items": (
-        "Potion", "Super Potion", "Revive", "Antidote", "Awakening", "Burn Heal",
+        "Potion", "Super Potion", "Revive", "Max Revive", "Antidote", "Awakening", "Burn Heal",
         "Calcium", "Carbos", "Escape Rope", "Ether", "Everstone", "Full Heal",
         "Full Restore", "Hard Stone", "Heart Scale", "HP Up", "Ice Heal", "Iron",
         "Paralyze Heal", "Protein", "Rare Candy", "Repel", "Sea Incense", "Soothe Bell",
@@ -412,6 +412,54 @@ for _species_name, _raw in SPECIES_METADATA_RAW.items():
         height_m=float(_raw["height_m"]),
         weight_kg=float(_raw["weight_kg"]),
     )
+
+
+_STAT_NATURE_NAMES = {
+    "Attack": "Atk", "Defense": "Def", "SpecialAttack": "SpAtk",
+    "SpecialDefense": "SpDef", "Speed": "Spe",
+}
+
+
+def calculate_pokemon_stats(
+    species_name: str,
+    level: int,
+    nature_name: str,
+    ivs: dict[str, int],
+    evs: dict[str, int],
+) -> dict[str, int]:
+    """Calculate standard final stats from the fields Gamma persists in each Pokémon struct."""
+    info = SPECIES_INFO.get(species_name.casefold())
+    if info is None:
+        raise ValueError(f"No standard base-stat mapping exists for {species_name!r}.")
+    if not 1 <= int(level) <= 100:
+        raise ValueError("Level must be between 1 and 100.")
+    if nature_name not in NATURE_EFFECTS:
+        raise ValueError(f"Unknown Nature {nature_name!r}.")
+    for stat in info.base_stats:
+        if not 0 <= int(ivs.get(stat, 0)) <= 31:
+            raise ValueError(f"{stat} IV must be between 0 and 31.")
+        if not 0 <= int(evs.get(stat, 0)) <= 252:
+            raise ValueError(f"{stat} EV must be between 0 and 252.")
+
+    hp_base = info.base_stats["HP"]
+    hp = 1 if species_name.casefold() == "shedinja" else (
+        ((2 * hp_base + int(ivs.get("HP", 0)) + int(evs.get("HP", 0)) // 4) * int(level)) // 100
+        + int(level) + 10
+    )
+    result = {"HP": hp}
+    raised, lowered = NATURE_EFFECTS[nature_name]
+    for stat in ("Attack", "Defense", "SpecialAttack", "SpecialDefense", "Speed"):
+        value = (
+            (2 * info.base_stats[stat] + int(ivs.get(stat, 0)) + int(evs.get(stat, 0)) // 4)
+            * int(level)
+        ) // 100 + 5
+        nature_stat = _STAT_NATURE_NAMES[stat]
+        if nature_stat == raised:
+            value = value * 110 // 100
+        elif nature_stat == lowered:
+            value = value * 90 // 100
+        result[stat] = value
+    return result
 
 
 TYPE_ORDER = (

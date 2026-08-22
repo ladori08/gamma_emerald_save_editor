@@ -24,6 +24,8 @@
 | Party | Species/nature/moves/PP catalogs and writes | Partial | Real-save in-memory round-trip; live reload pending |
 | Party | Species-filtered Ability + Hidden Ability labels | Done | 116-species metadata + real-save creation |
 | Party | Annotated Nature + holdable-item filters | Done | Unit/UI catalog checks |
+| Party | Live Base/Final stat calculation | Done | Formula tests + real-save GUI load |
+| UX | Searchable validated catalog dropdowns | Done | Filter tests + packaged GUI smoke test |
 | Performance | One-pass edit/move transaction | Done | Real story: ~0.78 s edit, ~1.03 s move |
 | Party | Create from verified empty template | Partial | Real-save GUI + GVAS/GES1 in-memory round-trip; live reload pending |
 | Storage | 14 boxes × 30 Pokemon records | Done | 420 slots parsed |
@@ -31,6 +33,7 @@
 | Bag | Five pocket tabs + filtered add/edit/remove | Partial | In-memory GVAS + GES1 round-trip; live reload pending |
 | Progress | Dex/flags/daycare/world state | Partial | Story + Quest decoded read-only |
 | Pokédex | Types/Abilities/base stats/type defenses | Done | 116 mapped species + 18-type chart |
-| Build | Windows executable | Done | v0.6.0 GUI/CLI/release ZIP smoke-tested |
+| Bag | Max Revive catalog/edit path | Done | Real-story in-memory reparse; live file unchanged |
+| Build | Windows executable | Done | v0.7.0 GUI/CLI/release ZIP smoke-tested |
 | Backup | Separate GitHub repository | Done | Sanitized branch + draft PR #1 published |
 | Live test | Edit, game load and in-game resave | Done | Potion 2 -> 3 survived normal game resave |
