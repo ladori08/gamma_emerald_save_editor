@@ -146,5 +146,7 @@ Status legend: `[x]` verified, `[~]` implemented/awaiting final verification, `[
 - [x] Back up the v0.15.1 source snapshot to the sanitized remote branch before runtime-hook work.
 - [x] Implement v0.16.0 optional Vitamin runtime rules with selectable per-stat/total caps and
   CSTM-only/all-Vitamin scope; verify native return override, ownership guards and clean uninstall.
+- [x] Replace technical Behavior summaries with live player-facing Effects sentences for every item
+  archetype, including dynamic held-item percentage/type wording.
 - [x] Publish a sanitized clean history with external key provisioning and draft PR.
 - [ ] Tag the first verified release.

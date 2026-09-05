@@ -1,6 +1,6 @@
 # Item Mod Builder (experimental)
 
-Version 0.16.0 expands the local template-based mod pipeline for the installed GE-1.0.0 Windows
+Version 0.16.1 expands the local template-based mod pipeline for the installed GE-1.0.0 Windows
 build. It creates a real cooked `ItemData` asset and patch pak; writing an arbitrary Bag name alone
 cannot create an item.
 
@@ -72,11 +72,16 @@ recorded hashes; an unexpected user mod blocks deletion. Fully close Gamma befor
 uninstall. `Uninstall runtime rules` removes only the editor-owned loader and returns Vitamin behavior
 to Gamma's native 100-per-stat/510-total clamp.
 
-## Held Item, Berry and TM behavior
+## Player-facing Effects summary
 
-The inline `Behavior summary` follows the selected template and explains the inherited effect for
-Held Items and Berries. Experimental templates also state where the exact trigger or species-specific
-behavior still needs an in-game test.
+The inline `Effects` sentence describes what the current item does in gameplay language. It updates
+from the display name and editable fields instead of repeating raw property names. For example,
+Silk Scarf with `Normal` and `1.2` reads: `When held, Silk Scarf raises the power of Normal-type
+moves by 20%.` Changing either field immediately changes the sentence. Healing items, status cures,
+Vitamins, held items, Berries, TMs and Balls have equivalent trigger-and-effect wording.
+
+The muted line below is intentionally separate: it identifies the cloned cooked template and marks
+experimental runtime paths. It is implementation/risk information, not the item effect.
 
 TM creation is useful even though the move itself is selected from an existing list: GE-1.0.0 ships
 99 verified move Blueprints but only 26 concrete TM items. A clone can therefore make an item that

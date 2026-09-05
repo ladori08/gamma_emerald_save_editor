@@ -304,6 +304,16 @@ Last updated: 2026-09-03
     suite to 69. Source/packaged GUI smoke and packaged read-only live-slot validation pass; the
     stable root launcher now targets v0.16.0.
 
+71. User clarified that `Behavior summary` should read like an item guide's Effects section, using
+    Silk Scarf's plain held effect as the example. Renamed the box to `Effects` and added a pure
+    player-facing formatter for every supported archetype. It uses the custom display name when set,
+    falls back to the selected template name for the default `Custom Item`, and updates live when
+    effect fields change. Silk Scarf now turns type `Normal` and multiplier `1.2` into `raises the
+    power of Normal-type moves by 20%`; Vitamin and TM summaries likewise follow selected EVs/move.
+    Technical clone/risk text remains in the separate muted line. Suite is now 70 tests;
+    source/packaged GUI smoke and packaged read-only live-slot validation pass. The stable launcher
+    now targets v0.16.1.
+
 ## Local identifiers
 
 Do not record local save filenames, filename salts or cryptographic material in continuity files.

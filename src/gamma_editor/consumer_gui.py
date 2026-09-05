@@ -63,7 +63,12 @@ from .domain import (
 from .evolution_data import evolution_family
 from .errors import GammaEditorError
 from .gvas import PropertyRecord, parse_gvas, patch_scalar
-from .item_mod_templates import ITEM_MOD_ARCHETYPES, TEMPLATE_BY_KEY, templates_for_archetype
+from .item_mod_templates import (
+    ITEM_MOD_ARCHETYPES,
+    TEMPLATE_BY_KEY,
+    player_effect_summary,
+    templates_for_archetype,
+)
 from .mod_builder import (
     BALL_TYPES,
     CUSTOM_ITEM_ID_BASE,
@@ -1926,7 +1931,7 @@ class SaveEditorApp(tk.Tk):
             widget.grid(row=row, column=1, sticky="ew", pady=3)
             self.mod_dynamic_rows[key] = (label_widget, widget)
 
-        behavior = ttk.LabelFrame(form, text="Behavior summary", padding=(8, 5))
+        behavior = ttk.LabelFrame(form, text="Effects", padding=(8, 5))
         behavior.grid(row=9, column=0, columnspan=2, sticky="ew", pady=(10, 8))
         self.mod_behavior_info_var = tk.StringVar()
         self.mod_template_info_var = tk.StringVar()
@@ -2012,6 +2017,24 @@ class SaveEditorApp(tk.Tk):
             wraplength=430,
         ).pack(fill="x", pady=(12, 0))
         self.mod_item_id_var.trace_add("write", self._update_custom_item_id_info)
+        for variable in (
+            self.mod_display_name_var,
+            self.mod_hp_restore_var,
+            self.mod_hp_percent_var,
+            self.mod_berry_restore_var,
+            self.mod_berry_threshold_var,
+            self.mod_hp_turn_var,
+            self.mod_attack_multiplier_var,
+            self.mod_special_attack_multiplier_var,
+            self.mod_type_multiplier_var,
+            self.mod_ball_rate_var,
+            self.mod_ball_type_var,
+            self.mod_vitamin_stat_var,
+            self.mod_vitamin_ev_amount_var,
+            self.mod_boosted_type_var,
+            self.mod_move_var,
+        ):
+            variable.trace_add("write", self._update_mod_effect_summary)
         self._assign_next_custom_item_id()
         self._on_mod_archetype_changed()
         self._refresh_mod_builder_status()
@@ -2071,10 +2094,7 @@ class SaveEditorApp(tk.Tk):
                 widget.grid_remove()
         if template:
             risk = " Experimental runtime path." if template.experimental else ""
-            self.mod_behavior_info_var.set(
-                template.behavior_note
-                or "Uses the selected shipped ItemData behavior; fields shown above are the safe editable values."
-            )
+            self._update_mod_effect_summary()
             self.mod_template_info_var.set(
                 f"Clones {template.label}'s cooked icon, flags, effects and dependencies; only the fields shown above change."
                 f"{risk} ItemID is numeric-only; CSTM IDs are generated sequentially. One installed editor patch/item at a time."
@@ -2082,6 +2102,33 @@ class SaveEditorApp(tk.Tk):
         else:
             self.mod_behavior_info_var.set("")
             self.mod_template_info_var.set("Choose a supported template.")
+
+    def _update_mod_effect_summary(self, *_args) -> None:
+        if not hasattr(self, "mod_behavior_info_var"):
+            return
+        template = self._selected_mod_template()
+        if not template:
+            self.mod_behavior_info_var.set("")
+            return
+        values = {
+            "HPRestoreAmount": self.mod_hp_restore_var.get(),
+            "HPRestorePercentage": self.mod_hp_percent_var.get(),
+            "BerryHPRestore": self.mod_berry_restore_var.get(),
+            "BerryActivationThreshold": self.mod_berry_threshold_var.get(),
+            "HPRestorePerTurn": self.mod_hp_turn_var.get(),
+            "AttackMultiplier": self.mod_attack_multiplier_var.get(),
+            "SpecialAttackMultiplier": self.mod_special_attack_multiplier_var.get(),
+            "TypeBoostMultiplier": self.mod_type_multiplier_var.get(),
+            "CatchRateModifier": self.mod_ball_rate_var.get(),
+            "VitaminStat": self.mod_vitamin_stat_var.get(),
+            "EVBoostAmount": self.mod_vitamin_ev_amount_var.get(),
+            "BoostedType": self.mod_boosted_type_var.get(),
+            "PokeballType": self.mod_ball_type_var.get(),
+            "TeachableMove": self.mod_move_var.get(),
+        }
+        self.mod_behavior_info_var.set(
+            player_effect_summary(template, item_name=self.mod_display_name_var.get(), values=values)
+        )
 
     def _refresh_mod_builder_status(self) -> None:
         self.mod_toolchain = discover_toolchain()
@@ -3745,18 +3792,18 @@ def main() -> None:
         vitamin_fields = app._selected_mod_template().editable_fields
         if "EVBoostAmount" not in vitamin_fields or app.mod_vitamin_ev_amount_var.get() != "10":
             raise RuntimeError("Vitamin EV amount dropdown did not load its verified default")
-        if "100 EV" not in app.mod_behavior_info_var.get() or "510 total" not in app.mod_behavior_info_var.get():
-            raise RuntimeError("Vitamin behavior summary omitted the native EV caps")
+        if "grants 10 Attack EVs" not in app.mod_behavior_info_var.get():
+            raise RuntimeError("Vitamin effect summary did not follow the current EV fields")
         app.mod_archetype_var.set("Held Item")
         app._on_mod_archetype_changed()
         app.update()
-        if "battle money" not in app.mod_behavior_info_var.get():
+        if "doubles the prize money" not in app.mod_behavior_info_var.get():
             raise RuntimeError("Held Item behavior summary did not follow the selected template")
         app.mod_archetype_var.set("TM")
         app._on_mod_archetype_changed()
         app.update()
-        if "does not create or edit a move" not in app.mod_behavior_info_var.get():
-            raise RuntimeError("TM behavior summary did not explain the existing-move boundary")
+        if "teaches it Surf" not in app.mod_behavior_info_var.get():
+            raise RuntimeError("TM effect summary did not follow the selected move")
         runtime_config = app._vitamin_runtime_config_from_form()
         if runtime_config != VitaminRuntimeConfig(252, 510, "custom"):
             raise RuntimeError("Vitamin runtime controls did not load their conservative defaults")

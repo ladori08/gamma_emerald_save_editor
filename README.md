@@ -40,7 +40,7 @@ GE-1.0.0 asset counts and a safe custom-item test checklist, see
 [the item extension guide](docs/ITEM_EXTENSION_GUIDE.md).
 The deeper [Item Mod Wizard feasibility report](docs/ITEM_MOD_WIZARD_FEASIBILITY.md) compares the
 Icarus workflow and records the completed Gamma cooked-asset proofs. The experimental
-[Item Mod Builder guide](docs/ITEM_MOD_BUILDER.md) covers the v0.16.0 multi-archetype wizard,
+[Item Mod Builder guide](docs/ITEM_MOD_BUILDER.md) covers the v0.16.1 multi-archetype wizard,
 Ball/media limitations, toolchain check, guarded install/uninstall and runtime test checklist.
 
 ## CLI
@@ -60,7 +60,7 @@ gamma-save slot-filename PokemonSaveSlot
 
 ## Editor workspace
 
-Version 0.16.0 uses an Indigo-style consumer workspace instead of exposing raw schema rows:
+Version 0.16.1 uses an Indigo-style consumer workspace instead of exposing raw schema rows:
 
 - Trainer form with synchronized Trainer name/ID edits.
 - One Pokémon tab combines six Party cards with a compact 5 × 6 current-Box grid. Dragging cards
@@ -120,6 +120,10 @@ Version 0.16.0 uses an Indigo-style consumer workspace instead of exposing raw s
   Held Item, Berry and TM selections show an inline behavior summary. TM clones can point at any of
   Gamma's 99 existing moves, including moves outside its 26 shipped TM items, but cannot author or
   modify a move's power, type or effects.
+- The wizard's `Effects` box uses player-facing sentences instead of schema terminology. It follows
+  the current display name and editable values live; for example, changing a held item's type or
+  multiplier immediately updates the stated move type and percentage. Technical template/experimental
+  details remain visually separated in the muted line below.
 - The Item Mod Builder can separately install editor-owned runtime Vitamin rules for GE-1.0.0.
   Options are a 100 or 252 per-stat cap, a 510 total cap or no total cap, and either custom CSTM
   Vitamins only or every Vitamin. The conservative default is 252/stat, 510 total, CSTM only.

@@ -914,3 +914,18 @@ The real fixture passed container integrity and semantic encode/decode round-tri
   `2DB705FA9ABCB415C7D73772FF7A8584C021B703D745BDA70D209DD3ABE1CA10`.
   GUI SHA-256: `83EC38E9DE557F1579FDE85010478658990ACC25A48340B9F537B6E097A1896F`.
   CLI SHA-256: `A5C5472052C33C305742A87610E96EF7953D6D6204D92B28341CA8648BEEB6CA`.
+
+## 2026-09-05 - v0.16.1 player-facing item Effects
+
+- User clarified the desired UX with a Silk Scarf item-guide example: the primary summary should say
+  what the item does, not describe cooked properties or template mechanics.
+- Renamed `Behavior summary` to `Effects` and added player-facing trigger/effect sentences across all
+  11 archetypes. Sentences use the current custom name, or the selected template name while the form
+  still says `Custom Item`, and update immediately when relevant fields change.
+- Held type boosts convert multipliers to percentages; `Normal` at `1.2` now reads `raises the power
+  of Normal-type moves by 20%`. Vitamin EV amount/stat and TM move selection are also live. Technical
+  clone/dependency/experimental notes remain in the muted line below rather than polluting the effect.
+- Added focused formatter coverage; all 70 tests, source/packaged GUI smoke and packaged CLI
+  read-only validation of every detected live slot pass. Refreshed the stable root launcher.
+  GUI SHA-256: `1B74230A09523A6E73304DB6905198E1E4F7487C59AEB52DE32F272CE54FFC21`.
+  CLI SHA-256: `1DC313B191729A02109E6F169A29B46F446EE34DAA7E9EB8CB3AFA6D7D88F0E8`.

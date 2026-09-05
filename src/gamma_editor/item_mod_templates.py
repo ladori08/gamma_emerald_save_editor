@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 
@@ -172,3 +173,114 @@ ITEM_MOD_ARCHETYPES = tuple(dict.fromkeys(template.archetype for template in ITE
 
 def templates_for_archetype(archetype: str) -> tuple[ItemModTemplate, ...]:
     return tuple(template for template in ITEM_MOD_TEMPLATES if template.archetype == archetype)
+
+
+def _display_number(value: str, fallback: str) -> str:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return fallback
+    return f"{number:g}"
+
+
+def _type_power_effect(item_name: str, move_type: str, multiplier: str) -> str:
+    try:
+        delta = (float(multiplier) - 1.0) * 100.0
+    except (TypeError, ValueError):
+        return f"When held, {item_name} changes the power of {move_type}-type moves."
+    verb = "raises" if delta >= 0 else "lowers"
+    amount = f"{abs(delta):g}%"
+    return f"When held, {item_name} {verb} the power of {move_type}-type moves by {amount}."
+
+
+def player_effect_summary(
+    template: ItemModTemplate,
+    *,
+    item_name: str = "",
+    values: Mapping[str, str] | None = None,
+) -> str:
+    """Return a short player-facing description that follows the wizard's current values."""
+    current = values or {}
+    requested_name = item_name.strip()
+    name = template.label if not requested_name or requested_name == "Custom Item" else requested_name
+    key = template.key
+
+    if template.archetype == "HP Restore":
+        amount = _display_number(current.get("HPRestoreAmount", ""), "the configured amount of")
+        if key == "DA_FullRestore":
+            return f"When used, {name} restores HP and cures the Pokémon's status conditions."
+        return f"When used, {name} restores {amount} HP to a Pokémon."
+
+    status_effects = {
+        "DA_Antidote": "poison",
+        "DA_Awakening": "sleep",
+        "DA_BurnHeal": "a burn",
+        "DA_IceHeal": "freezing",
+        "DA_ParalyzeHeal": "paralysis",
+        "DA_FullHeal": "all status conditions",
+    }
+    if key in status_effects:
+        return f"When used, {name} cures {status_effects[key]}."
+    if key == "DA_Revive":
+        return f"When used on a fainted Pokémon, {name} revives it and restores part of its HP."
+    if key == "DA_Ether":
+        return f"When used, {name} restores PP to one of a Pokémon's moves."
+    if template.archetype == "Vitamin":
+        stat = current.get("VitaminStat", "the selected stat")
+        amount = _display_number(current.get("EVBoostAmount", ""), "the configured number of")
+        return f"When used, {name} grants {amount} {stat} EVs, up to the active Vitamin caps."
+    if key == "DA_RareCandy":
+        return f"When used, {name} raises a Pokémon's level by one."
+    if key == "DA_WaterStone":
+        return f"When used on a compatible Pokémon, {name} causes it to evolve."
+    if key == "DA_Everstone":
+        return f"When held, {name} prevents its holder from evolving."
+
+    if key == "DA_AmuletCoin":
+        return f"When held by a Pokémon that joins the battle, {name} doubles the prize money received."
+    if key == "DA_LeftOvers":
+        amount = _display_number(current.get("HPRestorePerTurn", ""), "6.25")
+        return f"At the end of each turn, {name} restores {amount}% of its holder's maximum HP."
+    if key == "DA_LightOrb":
+        attack = _display_number(current.get("AttackMultiplier", ""), "2")
+        special = _display_number(current.get("SpecialAttackMultiplier", ""), "2")
+        healing = _display_number(current.get("HPRestorePerTurn", ""), "6.25")
+        return (
+            f"When held, {name} multiplies Attack by {attack}× and Sp. Atk by {special}×, "
+            f"then restores {healing}% maximum HP per turn."
+        )
+    if key in {"DA_MiracleSeed", "DA_SilkScarf", "DA_SoftSand"}:
+        return _type_power_effect(
+            name,
+            current.get("BoostedType", "the selected type"),
+            current.get("TypeBoostMultiplier", "1.2"),
+        )
+    if key == "DA_QuickClaw":
+        return f"When held, {name} may let its holder move first."
+
+    if key == "DA_OranBerry":
+        held = _display_number(current.get("BerryHPRestore", ""), "the configured amount of")
+        used = _display_number(current.get("HPRestoreAmount", ""), held)
+        return (
+            f"When its holder's HP is low, {name} is consumed to restore {held} HP. "
+            f"Using it from the Bag restores {used} HP."
+        )
+    if key == "DA_SitrusBerry":
+        amount = _display_number(current.get("BerryHPRestore", ""), "30")
+        return f"When its holder's HP is low, {name} is consumed to restore {amount} HP."
+    if key == "DA_ChestoBerry":
+        return f"When its holder falls asleep, {name} is consumed to wake it up."
+    if key == "DA_PersimBerry":
+        return f"When its holder becomes confused, {name} is consumed to cure its confusion."
+
+    if template.archetype == "TM":
+        move = current.get("TeachableMove", "the selected move")
+        return f"When used on a compatible Pokémon, {name} teaches it {move}."
+    if template.archetype == "Poké Ball":
+        ball_type = current.get("PokeballType", template.label.removesuffix(" visuals"))
+        if "CatchRateModifier" in template.editable_fields:
+            rate = _display_number(current.get("CatchRateModifier", ""), "the configured")
+            return f"When thrown at a wild Pokémon, {name} uses {ball_type} behavior with a {rate}× catch rate."
+        return f"When thrown at a wild Pokémon, {name} uses the inherited {ball_type} capture behavior."
+
+    return template.behavior_note or "Uses the selected shipped item's effect."

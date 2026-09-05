@@ -63,9 +63,10 @@
 | Mod builder | Cooked-asset override priority | Done | Runtime read mapped Potion override value from patch; reversible cleanup passed |
 | Mod builder | ItemData schema + new-asset discovery | Done | Build-matched usmap; 72 fields; manager auto-discovered renamed `/Game/Items/` asset |
 | Mod builder | Multi-archetype item wizard | Partial | CSTM ID + Vitamin/Ball/TM discovery proofs; gameplay effects pending |
+| UX | Player-facing dynamic item Effects | Done | All archetypes covered; Silk Scarf/Vitamin/TM value-following tests + GUI smoke |
 | Mod builder | Runtime Vitamin cap policy | Done | Native hook return override + production-form activation + owned cleanup; user gameplay acceptance pending |
 | Safety | Runtime mod ownership and conflict guards | Done | Managed hashes, unknown-loader refusal, user-mod uninstall refusal, game-running guard |
-| Build | Windows executable | Done | v0.16.0 built; 69 tests + source/packaged GUI smoke + packaged live-slot validation pass |
+| Build | Windows executable | Done | v0.16.1 built; 70 tests + source/packaged GUI smoke + packaged live-slot validation pass |
 | Build | Stable root launcher refreshed by builds | Done | Launcher opened current dist GUI; PID smoke-tested |
 | Backup | Separate GitHub repository | Done | Sanitized branch + draft PR #1 published |
 | Live test | Edit, game load and in-game resave | Done | Potion 2 -> 3 survived normal game resave |

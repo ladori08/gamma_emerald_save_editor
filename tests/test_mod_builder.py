@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from gamma_editor import mod_builder
-from gamma_editor.item_mod_templates import ITEM_MOD_ARCHETYPES, ITEM_MOD_TEMPLATES
+from gamma_editor.item_mod_templates import ITEM_MOD_ARCHETYPES, ITEM_MOD_TEMPLATES, player_effect_summary
 from gamma_editor.mod_builder import (
     BuiltItemMod,
     CUSTOM_ITEM_ID_BASE,
@@ -160,6 +160,23 @@ def test_behavior_notes_explain_held_berry_and_tm_scope() -> None:
     assert "doubles battle money" in by_key["DA_AmuletCoin"].behavior_note
     assert "cures Sleeping" in by_key["DA_ChestoBerry"].behavior_note
     assert "does not create or edit a move" in by_key["DA_TM01"].behavior_note
+
+
+def test_player_effect_summary_uses_plain_dynamic_item_wording() -> None:
+    by_key = {template.key: template for template in ITEM_MOD_TEMPLATES}
+    assert player_effect_summary(
+        by_key["DA_SilkScarf"],
+        item_name="Custom Scarf",
+        values={"BoostedType": "Normal", "TypeBoostMultiplier": "1.2"},
+    ) == "When held, Custom Scarf raises the power of Normal-type moves by 20%."
+    assert "grants 126 Speed EVs" in player_effect_summary(
+        by_key["DA_Protein"],
+        item_name="Speed Juice",
+        values={"VitaminStat": "Speed", "EVBoostAmount": "126"},
+    )
+    assert "teaches it Surf" in player_effect_summary(
+        by_key["DA_TM01"], item_name="Surf Disk", values={"TeachableMove": "Surf"}
+    )
 
 
 def test_discover_toolchain_from_explicit_roots(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

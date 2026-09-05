@@ -17,7 +17,7 @@ Last updated: 2026-09-05
   hashes, automatic backups, crash contexts and the current game diagnostics tail.
 - Story GVAS recursively parses more than 22,000 tagged records with no parser error, including
   Party, 14 boxes, Daycare, Bag, Seen/Caught and progress fields.
-- The v0.16.0 consumer GUI has five focused tabs: Trainer, Pokémon, Bag, Pokédex and the experimental
+- The v0.16.1 consumer GUI has five focused tabs: Trainer, Pokémon, Bag, Pokédex and the experimental
   Item Mod Builder. Party and Storage share one workspace with six Party cards, a compact 5 × 6 Box
   grid and complete-payload drag/drop.
 - Pokémon cards now use 32 px local runtime icons and the selected record uses a large 96/128 px
@@ -123,7 +123,7 @@ Last updated: 2026-09-05
   unavailable: it would produce an unverified runtime reference with the same class of risk as the
   earlier parser-valid/game-invalid Pokemon records. `docs/ITEM_EXTENSION_GUIDE.md` records the
   safe boundary and the future update/mod workflow.
-- v0.16.0 expands the experimental Item Mod Builder to 41 selected shipped templates across 11
+- v0.16.1 expands the experimental Item Mod Builder to 41 selected shipped templates across 11
   archetypes: HP/status/PP healing, Revive, Vitamin, Rare Candy, evolution/utility, held item, Berry,
   TM and Poké Ball. The form changes with the selected template and exposes only fields that are
   actually serialized there, including HP values, multipliers, boosted type/stat, any verified
@@ -140,6 +140,10 @@ Last updated: 2026-09-05
   stat and 510 EV total. Held Item, Berry and TM templates show an inline inherited-behavior summary;
   TM explains that it can target any of 99 existing moves versus 26 shipped TM items, but cannot edit
   or create the move Blueprint itself.
+- The Item Mod Builder now labels its primary help box `Effects` and renders a player-facing sentence
+  for every supported archetype. The sentence follows the current display name and editable values;
+  held-item type multipliers are converted to readable percentages. Cooked-template ownership and
+  experimental-risk text remains separate in the muted secondary line.
 - v0.16.0 adds an optional runtime Vitamin policy beside the item-pak builder: 100 or 252 per-stat,
   510 total or Unlimited, scoped to CSTM custom Vitamins or all Vitamins. The default is
   252/stat + 510 total + CSTM only. It changes in-game Vitamin use, not direct EV editing.
@@ -273,7 +277,7 @@ proven runtime inventory entries and remain unavailable. Unsupported structures 
 
 ## Next verified milestone
 
-Use v0.16.0 to build/install one disposable item per intended archetype, add it to the correct Bag
+Use v0.16.1 to build/install one disposable item per intended archetype, add it to the correct Bag
 pocket, then verify display and actual use/throw/teach/held effect plus normal in-game save/reload and
 editor reload. For a custom Vitamin above the vanilla cap, install the separate runtime rules with
 the desired scope/caps before launching Gamma, then uninstall them after the test. Remove all Bag and
