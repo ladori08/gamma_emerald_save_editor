@@ -143,5 +143,8 @@ Status legend: `[x]` verified, `[~]` implemented/awaiting final verification, `[
   packaged live-slot validation and representative Vitamin/Ball/TM runtime discovery pass).
 - [x] Build local v0.15.1 item-wizard UX update: persistent sequential CSTM IDs, verified Vitamin
   amount/cap controls, Held Item/Berry behavior help and explicit existing-move TM scope.
+- [x] Back up the v0.15.1 source snapshot to the sanitized remote branch before runtime-hook work.
+- [x] Implement v0.16.0 optional Vitamin runtime rules with selectable per-stat/total caps and
+  CSTM-only/all-Vitamin scope; verify native return override, ownership guards and clean uninstall.
 - [x] Publish a sanitized clean history with external key provisioning and draft PR.
 - [ ] Tag the first verified release.

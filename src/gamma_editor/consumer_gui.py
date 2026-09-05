@@ -90,6 +90,13 @@ from .save_service import (
     write_save,
 )
 from .sprites import SpriteRepository
+from .vitamin_runtime import (
+    VitaminRuntimeConfig,
+    discover_vitamin_runtime_environment,
+    install_vitamin_runtime,
+    installed_vitamin_runtime_config,
+    uninstall_vitamin_runtime,
+)
 
 
 APP_TITLE = "Gamma Emerald Save Editor"
@@ -1944,6 +1951,53 @@ class SaveEditorApp(tk.Tk):
         ttk.Button(top, text="Refresh", command=self._refresh_mod_builder_status).pack(side="right")
         self.mod_status_frame = ttk.Frame(environment)
         self.mod_status_frame.pack(fill="both", expand=True, pady=(8, 0))
+
+        runtime = ttk.LabelFrame(environment, text="Vitamin runtime rules", padding=(8, 6))
+        runtime.pack(fill="x", pady=(10, 0))
+        runtime.columnconfigure(1, weight=1)
+        self.mod_runtime_stat_cap_var = tk.StringVar(value="252")
+        self.mod_runtime_total_cap_var = tk.StringVar(value="510")
+        self.mod_runtime_scope_var = tk.StringVar(value="Custom CSTM Vitamins only")
+        self.mod_runtime_status_var = tk.StringVar(value="Checking runtime hook support...")
+        runtime_fields = (
+            ("Per-stat cap", self.mod_runtime_stat_cap_var, ("100", "252")),
+            ("Total EV cap", self.mod_runtime_total_cap_var, ("510", "Unlimited")),
+            (
+                "Apply to",
+                self.mod_runtime_scope_var,
+                ("Custom CSTM Vitamins only", "All Vitamins"),
+            ),
+        )
+        for row, (label, variable, values) in enumerate(runtime_fields):
+            ttk.Label(runtime, text=label, width=14).grid(row=row, column=0, sticky="w", pady=2)
+            ttk.Combobox(
+                runtime,
+                textvariable=variable,
+                values=values,
+                state="readonly",
+            ).grid(row=row, column=1, sticky="ew", pady=2)
+        runtime_buttons = ttk.Frame(runtime)
+        runtime_buttons.grid(row=3, column=0, columnspan=2, sticky="w", pady=(6, 2))
+        self.mod_runtime_install_button = ttk.Button(
+            runtime_buttons,
+            text="Install runtime rules",
+            command=self.install_vitamin_runtime_rules,
+        )
+        self.mod_runtime_install_button.pack(side="left")
+        self.mod_runtime_uninstall_button = ttk.Button(
+            runtime_buttons,
+            text="Uninstall runtime rules",
+            command=self.uninstall_vitamin_runtime_rules,
+            state="disabled",
+        )
+        self.mod_runtime_uninstall_button.pack(side="left", padx=6)
+        ttk.Label(
+            runtime,
+            textvariable=self.mod_runtime_status_var,
+            style="Muted.TLabel",
+            wraplength=420,
+        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(3, 0))
+
         self.mod_environment_var = tk.StringVar(value="Checking...")
         ttk.Label(environment, textvariable=self.mod_environment_var, style="Muted.TLabel", wraplength=430).pack(
             fill="x", pady=(10, 0)
@@ -2032,6 +2086,8 @@ class SaveEditorApp(tk.Tk):
     def _refresh_mod_builder_status(self) -> None:
         self.mod_toolchain = discover_toolchain()
         self.custom_item_spec = installed_item(self.mod_toolchain)
+        self.vitamin_runtime_environment = discover_vitamin_runtime_environment(self.mod_toolchain)
+        self.vitamin_runtime_config = installed_vitamin_runtime_config(self.vitamin_runtime_environment)
         for child in self.mod_status_frame.winfo_children():
             child.destroy()
         for row, (label, value, ok) in enumerate(self.mod_toolchain.status_rows()):
@@ -2059,6 +2115,88 @@ class SaveEditorApp(tk.Tk):
         )
         if hasattr(self, "pokemon_editor"):
             self.pokemon_editor.held_item_combo.set_source_values(self._held_item_names())
+        runtime = self.vitamin_runtime_environment
+        installed_runtime = self.vitamin_runtime_config
+        runtime_conflict = bool(
+            not installed_runtime
+            and (
+                (runtime.loader_target and runtime.loader_target.exists())
+                or (runtime.ue4ss_target and runtime.ue4ss_target.exists())
+            )
+        )
+        self.mod_runtime_install_button.configure(
+            state="normal" if runtime.ready and not runtime_conflict else "disabled",
+            text="Update runtime rules" if installed_runtime else "Install runtime rules",
+        )
+        self.mod_runtime_uninstall_button.configure(state="normal" if installed_runtime else "disabled")
+        if installed_runtime:
+            self.mod_runtime_stat_cap_var.set(str(installed_runtime.stat_cap))
+            self.mod_runtime_total_cap_var.set(
+                str(installed_runtime.total_cap) if installed_runtime.total_cap is not None else "Unlimited"
+            )
+            self.mod_runtime_scope_var.set(
+                "All Vitamins" if installed_runtime.scope == "all" else "Custom CSTM Vitamins only"
+            )
+            total = installed_runtime.total_cap if installed_runtime.total_cap is not None else "Unlimited"
+            scope = "all Vitamins" if installed_runtime.scope == "all" else "custom CSTM Vitamins"
+            self.mod_runtime_status_var.set(
+                f"Installed: {installed_runtime.stat_cap}/stat, {total} total, {scope}. Close the game before updating."
+            )
+        elif runtime_conflict:
+            self.mod_runtime_status_var.set(
+                "An unmanaged UE4SS/dwmapi installation exists; the editor will not overwrite or delete it."
+            )
+        elif runtime.ready:
+            self.mod_runtime_status_var.set(
+                "Ready. This installs an editor-owned UE4SS hook; it is separate from the item .pak."
+            )
+        else:
+            self.mod_runtime_status_var.set("Local GE-1.0.0 UE4SS runtime source is missing or incomplete.")
+
+    def _vitamin_runtime_config_from_form(self) -> VitaminRuntimeConfig:
+        total_text = self.mod_runtime_total_cap_var.get()
+        scope = "all" if self.mod_runtime_scope_var.get() == "All Vitamins" else "custom"
+        return VitaminRuntimeConfig(
+            stat_cap=int(self.mod_runtime_stat_cap_var.get()),
+            total_cap=None if total_text == "Unlimited" else int(total_text),
+            scope=scope,
+        ).validated()
+
+    def install_vitamin_runtime_rules(self) -> None:
+        try:
+            config = self._vitamin_runtime_config_from_form()
+            total = config.total_cap if config.total_cap is not None else "Unlimited"
+            scope = "every Vitamin" if config.scope == "all" else "CSTM custom Vitamins only"
+            action = "Update" if self.vitamin_runtime_config else "Install"
+            if not messagebox.askyesno(
+                APP_TITLE,
+                f"{action} runtime Vitamin rules?\n\n"
+                f"Per-stat cap: {config.stat_cap}\nTotal cap: {total}\nScope: {scope}\n\n"
+                "This installs an editor-owned UE4SS loader beside the game executable. Close Gamma first.",
+            ):
+                return
+            install_vitamin_runtime(config, self.vitamin_runtime_environment)
+            self._refresh_mod_builder_status()
+            messagebox.showinfo(
+                APP_TITLE,
+                "Vitamin runtime rules installed and ownership manifest verified. Launch Gamma normally to activate them.",
+            )
+        except (ValueError, ModBuilderError) as exc:
+            messagebox.showerror(APP_TITLE, str(exc))
+
+    def uninstall_vitamin_runtime_rules(self) -> None:
+        if not messagebox.askyesno(
+            APP_TITLE,
+            "Uninstall the editor-owned Vitamin runtime rules?\n\n"
+            "Vitamin behavior returns to Gamma's native 100/stat and 510-total caps.",
+        ):
+            return
+        try:
+            uninstall_vitamin_runtime(self.vitamin_runtime_environment)
+            self._refresh_mod_builder_status()
+            messagebox.showinfo(APP_TITLE, "Vitamin runtime rules uninstalled; vanilla behavior is restored.")
+        except ModBuilderError as exc:
+            messagebox.showerror(APP_TITLE, str(exc))
 
     def _item_mod_spec_from_form(self) -> ItemModSpec:
         try:
@@ -3619,6 +3757,11 @@ def main() -> None:
         app.update()
         if "does not create or edit a move" not in app.mod_behavior_info_var.get():
             raise RuntimeError("TM behavior summary did not explain the existing-move boundary")
+        runtime_config = app._vitamin_runtime_config_from_form()
+        if runtime_config != VitaminRuntimeConfig(252, 510, "custom"):
+            raise RuntimeError("Vitamin runtime controls did not load their conservative defaults")
+        if app.vitamin_runtime_environment.ready and "UE4SS" not in app.mod_runtime_status_var.get():
+            raise RuntimeError("Vitamin runtime environment status was not rendered")
         app.destroy()
         return
     app.mainloop()

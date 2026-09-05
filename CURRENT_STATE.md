@@ -17,7 +17,7 @@ Last updated: 2026-09-05
   hashes, automatic backups, crash contexts and the current game diagnostics tail.
 - Story GVAS recursively parses more than 22,000 tagged records with no parser error, including
   Party, 14 boxes, Daycare, Bag, Seen/Caught and progress fields.
-- The v0.15.1 consumer GUI has five focused tabs: Trainer, Pokémon, Bag, Pokédex and the experimental
+- The v0.16.0 consumer GUI has five focused tabs: Trainer, Pokémon, Bag, Pokédex and the experimental
   Item Mod Builder. Party and Storage share one workspace with six Party cards, a compact 5 × 6 Box
   grid and complete-payload drag/drop.
 - Pokémon cards now use 32 px local runtime icons and the selected record uses a large 96/128 px
@@ -123,7 +123,7 @@ Last updated: 2026-09-05
   unavailable: it would produce an unverified runtime reference with the same class of risk as the
   earlier parser-valid/game-invalid Pokemon records. `docs/ITEM_EXTENSION_GUIDE.md` records the
   safe boundary and the future update/mod workflow.
-- v0.15.1 expands the experimental Item Mod Builder to 41 selected shipped templates across 11
+- v0.16.0 expands the experimental Item Mod Builder to 41 selected shipped templates across 11
   archetypes: HP/status/PP healing, Revive, Vitamin, Rare Candy, evolution/utility, held item, Berry,
   TM and Poké Ball. The form changes with the selected template and exposes only fields that are
   actually serialized there, including HP values, multipliers, boosted type/stat, any verified
@@ -140,12 +140,21 @@ Last updated: 2026-09-05
   stat and 510 EV total. Held Item, Berry and TM templates show an inline inherited-behavior summary;
   TM explains that it can target any of 99 existing moves versus 26 shipped TM items, but cannot edit
   or create the move Blueprint itself.
+- v0.16.0 adds an optional runtime Vitamin policy beside the item-pak builder: 100 or 252 per-stat,
+  510 total or Unlimited, scoped to CSTM custom Vitamins or all Vitamins. The default is
+  252/stat + 510 total + CSTM only. It changes in-game Vitamin use, not direct EV editing.
+- The runtime installer owns a local build-matched UE4SS copy through a hash manifest, refuses to
+  merge with an existing unknown loader/mod tree, blocks update/removal after managed files change,
+  and refuses uninstall when extra user-mod files appear. Uninstall restores vanilla behavior.
+- A headless GE-1.0.0 proof registered the exact native `CalculateVitaminGain` hook and changed its
+  returned result from 0 to a sentinel 123 without writing a save. A production-form install also
+  logged the intended 252/Unlimited/all-Vitamin configuration, then passed guarded uninstall.
 - A headless read-only manager probe discovered representative custom Vitamin, Ball and TM assets and
   read their new IDs plus template-specific stat/Ball/rate/move fields. Real writer/pak builds for all
   three passed. Actual use/throw/teach/held-effect behavior and normal game save/reload remain a user
   acceptance step per archetype; Ball/evolution/held paths stay clearly experimental.
 - The supplied Cobblemon archive contains 33 raw Minecraft OGG files and no license file. Its audio
-  and the attached PNG require redistribution permission plus UE 5.6 import/cooking, so v0.15.1 does
+  and the attached PNG require redistribution permission plus UE 5.6 import/cooking, so v0.16.0 does
   not bundle them. Ball clones reuse one of Gamma's nine complete cooked Ball visual/SFX sets; the
   eight enum-only Ball behaviors may reuse that visual but still have no unique assets in GE-1.0.0.
 - UE4SS generated a matching `.usmap`/`.jmap`; the native 72-property ItemData schema was recovered.
@@ -166,7 +175,7 @@ Last updated: 2026-09-05
   0.78 s edit, 0.94 s Storage create, 2.49 s Party create and 1.03 s Storage-to-Party move.
 - Searchable Gender, Status and Met Type values now serialize back to their required Gamma enum
   prefixes; v0.7.0 incorrectly submitted display leaves such as `Male` during unrelated Stats edits.
-- Automated suite passes: 65 tests plus real-story in-memory Bag insertion/removal, Party/Storage
+- Automated suite passes: 69 tests plus real-story in-memory Bag insertion/removal, Party/Storage
   payload movement, empty-slot creation, EV-limit override and encrypt/decrypt verification.
 - A real-story, memory-only Mudkip-to-Torchic conversion passed with all identity/ownership fields
   preserved, 22,598 property records retained and a successful GVAS/GES1 round-trip. The live save
@@ -264,7 +273,9 @@ proven runtime inventory entries and remain unavailable. Unsupported structures 
 
 ## Next verified milestone
 
-Use v0.15.1 to build/install one disposable item per intended archetype, add it to the correct Bag
+Use v0.16.0 to build/install one disposable item per intended archetype, add it to the correct Bag
 pocket, then verify display and actual use/throw/teach/held effect plus normal in-game save/reload and
-editor reload. Remove all Bag and held references before replacing/uninstalling its patch. Keep the
-verified Mudkip-only backup as a fallback.
+editor reload. For a custom Vitamin above the vanilla cap, install the separate runtime rules with
+the desired scope/caps before launching Gamma, then uninstall them after the test. Remove all Bag and
+held references before replacing/uninstalling an item patch. Keep the verified Mudkip-only backup as
+a fallback.

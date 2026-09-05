@@ -889,3 +889,28 @@ The real fixture passed container integrity and semantic encode/decode round-tri
   packaged GUI smoke and read-only packaged CLI validation of the currently detected live slot.
   GUI SHA-256: `FA8D312FE73B822BA0B2A98712F8BEDE2D2A37D963570D791E04D7B3D844FB5C`.
   CLI SHA-256: `9A2F2D9FF127ABD83099843744759C7B5D6FD8799121DF4E64AC12C3EA9323A0`.
+
+## 2026-09-05 - v0.16.0 runtime Vitamin policy
+
+- Published the complete v0.15.1 source tree to the sanitized remote branch as commit
+  `66b32c7fd733eccaffad477922411c5d65c27982` before starting runtime mutation work, then created the
+  dedicated `feat/vitamin-runtime-patch` branch.
+- Added an optional Item Mod Builder panel for 100/252 per-stat cap, 510/Unlimited total cap and
+  CSTM-only/all-Vitamin scope. Direct Pokemon EV editing remains unchanged; this policy controls
+  Gamma's in-game Vitamin-use result.
+- Added a generated UE4SS Lua mod that post-hooks the native GE-1.0.0
+  `/Script/PokemonEmerald.PokemonManagerSubsystem:CalculateVitaminGain` function. Experimentally
+  established the native callback parameter order, then proved the hook can replace a vanilla return
+  of 0 with sentinel 123. A production-form 252/Unlimited/all run logged active registration.
+- Added guarded local runtime discovery/install/update/uninstall. The editor refuses to merge with
+  an unmanaged loader, verifies managed hashes before changes, tolerates generated UE4SS logs, blocks
+  deletion if an extra user mod exists and stages owned files out of the live names before cleanup.
+- Added four focused tests. The Windows build caught and prompted a fix for legacy `MAX_PATH` during
+  staging: the installer now copies only the active runtime/shared mod payload and uses a short
+  same-directory stage name. All 69 tests, source/packaged GUI smoke and packaged CLI read-only
+  validation of every detected live slot pass. The stable root launcher now targets v0.16.0.
+- All proof loaders and item patches were removed, no live save changed, no quarantine remains, and
+  the base pak SHA-256 remains
+  `2DB705FA9ABCB415C7D73772FF7A8584C021B703D745BDA70D209DD3ABE1CA10`.
+  GUI SHA-256: `83EC38E9DE557F1579FDE85010478658990ACC25A48340B9F537B6E097A1896F`.
+  CLI SHA-256: `A5C5472052C33C305742A87610E96EF7953D6D6204D92B28341CA8648BEEB6CA`.

@@ -1,6 +1,6 @@
 # Item Mod Builder (experimental)
 
-Version 0.15.1 expands the local template-based mod pipeline for the installed GE-1.0.0 Windows
+Version 0.16.0 expands the local template-based mod pipeline for the installed GE-1.0.0 Windows
 build. It creates a real cooked `ItemData` asset and patch pak; writing an arbitrary Bag name alone
 cannot create an item.
 
@@ -45,6 +45,32 @@ that a Vitamin applies the smallest of the configured amount, the remaining room
 selected stat, and the remaining room to 510 total EV. Therefore choices such as 126 or 252 are valid
 serialized values but a single use still cannot push that stat above 100 through Vitamin behavior.
 The separate Pokemon editor may store up to 252 per stat; that is a different path.
+
+### Optional runtime Vitamin rules
+
+v0.16.0 adds a separate `Vitamin runtime rules` panel. It hooks GE-1.0.0's native
+`CalculateVitaminGain` result at runtime, so Vitamin use can match the editor's broader EV model:
+
+- per-stat cap: vanilla `100` or full `252`;
+- total cap: vanilla `510` or `Unlimited`;
+- scope: only numeric IDs in the editor's `CSTM` namespace, or all Vitamins including vanilla ones.
+
+The default is `252 / 510 / Custom CSTM Vitamins only`. This lets a custom Vitamin reach 252 in one
+stat while retaining the normal competitive total and leaving shipped Vitamins untouched. Selecting
+`Unlimited` permits a total above 510; selecting `All Vitamins` changes the behavior of shipped
+Vitamins too.
+
+This feature does not add an EV button to the Pokemon editor and does not change direct EV editing.
+It changes what happens when a Vitamin is consumed during gameplay. The custom item `.pak` supplies
+the item and its configured `EVBoostAmount`; the runtime rule supplies the cap policy. Install both
+when testing a custom Vitamin.
+
+The runtime installer copies a build-matched local UE4SS loader beside Gamma's executable and writes
+an ownership/hash manifest. It refuses an existing unmanaged `dwmapi.dll` or `ue4ss` directory rather
+than merging with somebody else's mods. Update and uninstall require the owned files to retain their
+recorded hashes; an unexpected user mod blocks deletion. Fully close Gamma before install, update or
+uninstall. `Uninstall runtime rules` removes only the editor-owned loader and returns Vitamin behavior
+to Gamma's native 100-per-stat/510-total clamp.
 
 ## Held Item, Berry and TM behavior
 

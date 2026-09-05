@@ -292,6 +292,18 @@ Last updated: 2026-09-03
     probe was discovered with the CSTM-derived ID, Speed and EVBoostAmount 84; its temporary loader and
     patch were removed, no save was written and the base pak hash remained unchanged.
 
+70. User approved a runtime Vitamin cap feature after clarifying that it must affect item use rather
+    than add a redundant direct-EV button. Before implementation, the complete v0.15.1 source snapshot
+    was published as remote commit `66b32c7fd733eccaffad477922411c5d65c27982`, then work continued on
+    `feat/vitamin-runtime-patch`. Implemented editor-owned build-matched UE4SS installation with
+    100/252 per-stat, 510/Unlimited total and CSTM-only/all-Vitamin choices. A headless proof invoked
+    the exact native `CalculateVitaminGain` function: vanilla returned 0 and the post-hook returned
+    sentinel 123, proving return override rather than log-only registration. A production-form
+    252/Unlimited/all install logged the active hook and was removed through its ownership guard.
+    Every probe changed zero save files; the base pak remained byte-identical. Four tests bring the
+    suite to 69. Source/packaged GUI smoke and packaged read-only live-slot validation pass; the
+    stable root launcher now targets v0.16.0.
+
 ## Local identifiers
 
 Do not record local save filenames, filename salts or cryptographic material in continuity files.

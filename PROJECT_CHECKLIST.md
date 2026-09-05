@@ -55,7 +55,7 @@
 | Pokédex | Types/Abilities/base stats/type defenses | Done | 116 mapped species + 18-type chart |
 | Bag | Hide asset-less Max Revive | Done | Removed from Bag/held-item choices; Bag Catalog Info documents scope |
 | Bag | Blueprint/icon-only item candidates | Partial | Classified as unregistered; runtime verification pending |
-| Bag | Template-derived custom item creation | Partial | v0.15.1 has 41 templates/11 archetypes, CSTM IDs and behavior help; per-effect user runtime acceptance pending |
+| Bag | Template-derived custom item creation | Partial | v0.16.0 has 41 templates/11 archetypes, CSTM IDs and behavior help; per-effect user runtime acceptance pending |
 | Docs | Item extension and runtime-test guide | Done | `docs/ITEM_EXTENSION_GUIDE.md`; current-build evidence + future mod/update path |
 | Research | Icarus vs Gamma item-modding pipeline | Done | JSON DataTable patches vs unversioned cooked ItemData/Blueprint dependencies |
 | Mod builder | V11 patch-pak construction | Done | Correct V11/mount point/internal path round-trip proven |
@@ -63,7 +63,9 @@
 | Mod builder | Cooked-asset override priority | Done | Runtime read mapped Potion override value from patch; reversible cleanup passed |
 | Mod builder | ItemData schema + new-asset discovery | Done | Build-matched usmap; 72 fields; manager auto-discovered renamed `/Game/Items/` asset |
 | Mod builder | Multi-archetype item wizard | Partial | CSTM ID + Vitamin/Ball/TM discovery proofs; gameplay effects pending |
-| Build | Windows executable | Done | v0.15.1 built; 65 tests + source/packaged GUI smoke + packaged live-slot validation pass |
+| Mod builder | Runtime Vitamin cap policy | Done | Native hook return override + production-form activation + owned cleanup; user gameplay acceptance pending |
+| Safety | Runtime mod ownership and conflict guards | Done | Managed hashes, unknown-loader refusal, user-mod uninstall refusal, game-running guard |
+| Build | Windows executable | Done | v0.16.0 built; 69 tests + source/packaged GUI smoke + packaged live-slot validation pass |
 | Build | Stable root launcher refreshed by builds | Done | Launcher opened current dist GUI; PID smoke-tested |
 | Backup | Separate GitHub repository | Done | Sanitized branch + draft PR #1 published |
 | Live test | Edit, game load and in-game resave | Done | Potion 2 -> 3 survived normal game resave |
