@@ -35,6 +35,15 @@ def _type(name: str, *parameters: bytes) -> bytes:
     return fstring(name) + struct.pack("<I", len(parameters)) + b"".join(parameters)
 
 
+def _fstring_lengths(payload: bytes, offset: int = 0) -> tuple[list[int], int]:
+    lengths: list[int] = []
+    while offset < len(payload):
+        (length,) = struct.unpack_from("<i", payload, offset)
+        lengths.append(length)
+        offset += 4 + (length if length >= 0 else -length * 2)
+    return lengths, offset
+
+
 def _property(name: str, type_bytes: bytes, payload: bytes) -> bytes:
     return fstring(name) + type_bytes + struct.pack("<IB", len(payload), 0) + payload
 
@@ -171,7 +180,7 @@ def test_resize_nested_string_updates_parent_size() -> None:
 
 def test_patch_enum_and_soft_object_payloads() -> None:
     enum_payload = fstring("ENature::Naive")
-    species_payload = fstring("/Game/Old/DA_Old") + fstring("DA_Old")
+    species_payload = fstring("/Game/Old/DA_Old") + fstring("DA_Old") + struct.pack("<i", 0)
     gvas = b"".join(
         (
             _base_header(),
@@ -189,6 +198,10 @@ def test_patch_enum_and_soft_object_payloads() -> None:
     after = parse_gvas(raw)
     assert after.properties[0].value == "ENature::Adamant"
     assert after.properties[1].value == "/Game/New/DA_New (DA_New)"
+    species = after.properties[1]
+    lengths, end = _fstring_lengths(raw[species.value_offset : species.end_offset])
+    assert lengths == [len("/Game/New/DA_New") + 1, len("DA_New") + 1, 0]
+    assert end == species.value_size
 
 
 def test_patch_move_and_pp_arrays_together() -> None:
@@ -226,6 +239,20 @@ def test_patch_move_and_pp_arrays_together() -> None:
         "/Game/Moves/BP_Move_Tackle (BP_Move_Tackle_C)",
     )
     assert after.properties[1].collection_values == (30, 35)
+    moves = after.properties[0]
+    payload = raw[moves.value_offset : moves.end_offset]
+    (count,) = struct.unpack_from("<I", payload)
+    assert count == 2
+    offset = 4
+    subpath_lengths: list[int] = []
+    for _ in range(count):
+        lengths, consumed = _fstring_lengths(payload[offset:])
+        subpath_lengths.append(lengths[2])
+        # Each move has exactly three FStrings; advance over those three only.
+        for length in lengths[:3]:
+            offset += 4 + (length if length >= 0 else -length * 2)
+    assert offset == len(payload)
+    assert subpath_lengths == [0, 0]
 
 
 def test_batch_resizes_multiple_siblings_and_parent_once() -> None:

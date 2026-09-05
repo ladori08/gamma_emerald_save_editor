@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 import re
 
+from .learnsets import MOVE_LEARNSETS_RAW
+from .move_data import MOVE_BASE_PP_RAW
 from .species_metadata import SPECIES_METADATA_RAW
 
 
@@ -40,6 +42,47 @@ class SpeciesInfo:
     abilities: tuple[AbilityChoice, ...]
     height_m: float
     weight_kg: float
+
+
+@dataclass(slots=True, frozen=True)
+class MoveLearnset:
+    level_up: tuple[tuple[int, AssetChoice], ...]
+    tm: tuple[AssetChoice, ...]
+    hm: tuple[AssetChoice, ...]
+    egg: tuple[AssetChoice, ...]
+
+    def choices(self, *, level: int, source: str = "all") -> tuple[AssetChoice, ...]:
+        level_up = tuple(move for required_level, move in self.level_up if required_level <= max(1, level))
+        groups = {
+            "level_up": level_up,
+            "tm": self.tm,
+            "hm": self.hm,
+            "egg": self.egg,
+        }
+        selected = groups.get(source)
+        if selected is not None:
+            return selected
+        ordered: list[AssetChoice] = []
+        seen: set[str] = set()
+        for group in (level_up, self.tm, self.hm, self.egg):
+            for move in group:
+                key = move.name.casefold()
+                if key not in seen:
+                    seen.add(key)
+                    ordered.append(move)
+        return tuple(ordered)
+
+    def source_labels(self, move_name: str, *, level: int) -> tuple[str, ...]:
+        key = move_name.casefold()
+        labels = []
+        for required_level, move in self.level_up:
+            if move.name.casefold() == key:
+                suffix = "" if required_level <= max(1, level) else f" (requires Lv. {required_level})"
+                labels.append(f"Level-up Lv. {required_level}{suffix}")
+        for label, group in (("TM", self.tm), ("HM", self.hm), ("Egg", self.egg)):
+            if any(move.name.casefold() == key for move in group):
+                labels.append(label)
+        return tuple(labels)
 
 
 def display_name(token: str) -> str:
@@ -296,6 +339,85 @@ SPECIES = _parse_manifest(_SPECIES_MANIFEST, move=False)
 MOVES = _parse_manifest(_MOVE_MANIFEST, move=True)
 SPECIES_BY_NAME = {item.name.casefold(): item for item in SPECIES}
 MOVES_BY_NAME = {item.name.casefold(): item for item in MOVES}
+_MOVES_BY_TOKEN = {
+    item.object_name.removeprefix("BP_Move_").removesuffix("_C"): item
+    for item in MOVES
+}
+_SPECIES_BY_TOKEN = {
+    item.object_name.removeprefix("DA_"): item
+    for item in SPECIES
+}
+MOVE_BASE_PP = {
+    _MOVES_BY_TOKEN[token].name.casefold(): int(base_pp)
+    for token, base_pp in MOVE_BASE_PP_RAW.items()
+}
+if set(MOVE_BASE_PP) != set(MOVES_BY_NAME):
+    raise RuntimeError("GE-1.0.0 Base PP data does not exactly cover the move catalog")
+
+
+def base_pp_for_move(move_name: str) -> int:
+    try:
+        return MOVE_BASE_PP[move_name.casefold()]
+    except KeyError as exc:
+        raise ValueError(f"Move {move_name!r} has no verified GE-1.0.0 Base PP") from exc
+
+
+def pp_up_limit_for_move(move_name: str) -> int:
+    """Return the mainline/Gamma PP Up limit; one-PP moves cannot be boosted."""
+    return 0 if base_pp_for_move(move_name) <= 1 else 3
+
+
+def max_pp_for_move(move_name: str, pp_ups: int) -> int:
+    limit = pp_up_limit_for_move(move_name)
+    if not 0 <= int(pp_ups) <= limit:
+        raise ValueError(f"PP Up for {move_name} must be between 0 and {limit}")
+    base_pp = base_pp_for_move(move_name)
+    return base_pp + (base_pp * int(pp_ups)) // 5
+
+
+def pp_ups_from_max_pp(move_name: str, maximum_pp: int) -> int | None:
+    return next(
+        (
+            pp_ups
+            for pp_ups in range(pp_up_limit_for_move(move_name) + 1)
+            if max_pp_for_move(move_name, pp_ups) == int(maximum_pp)
+        ),
+        None,
+    )
+
+
+def _learnset_moves(tokens: tuple[str, ...]) -> tuple[AssetChoice, ...]:
+    try:
+        return tuple(_MOVES_BY_TOKEN[token] for token in tokens)
+    except KeyError as exc:  # A generated catalog mismatch must fail loudly during development/build.
+        raise RuntimeError(f"Move learnset references an unknown GE-1.0.0 move token: {exc.args[0]}") from exc
+
+
+MOVE_LEARNSETS: dict[str, MoveLearnset] = {}
+for _species_name, _sources in MOVE_LEARNSETS_RAW.items():
+    _species_choice = _SPECIES_BY_TOKEN.get(_species_name)
+    if _species_choice is None:
+        raise RuntimeError(f"Move learnset references an unknown GE-1.0.0 Species token: {_species_name}")
+    MOVE_LEARNSETS[_species_choice.name.casefold()] = MoveLearnset(
+        level_up=tuple((int(level), _MOVES_BY_TOKEN[token]) for level, token in _sources["level_up"]),
+        tm=_learnset_moves(_sources["tm"]),
+        hm=_learnset_moves(_sources["hm"]),
+        egg=_learnset_moves(_sources["egg"]),
+    )
+
+
+def learnset_for_species(species_name: str) -> MoveLearnset | None:
+    return MOVE_LEARNSETS.get(species_name.casefold())
+
+
+def legal_moves_for_species(species_name: str, level: int) -> tuple[AssetChoice, ...]:
+    learnset = learnset_for_species(species_name)
+    return learnset.choices(level=level) if learnset is not None else ()
+
+
+def move_is_legal_for_species(species_name: str, move_name: str, level: int) -> bool:
+    key = move_name.casefold()
+    return any(move.name.casefold() == key for move in legal_moves_for_species(species_name, level))
 
 NATURES = (
     "Hardy", "Lonely", "Brave", "Adamant", "Naughty",
@@ -342,7 +464,7 @@ BAG_POCKET_LABELS = {
 
 _ITEMS_BY_POCKET: dict[str, tuple[str, ...]] = {
     "Items": (
-        "Potion", "Super Potion", "Revive", "Max Revive", "Antidote", "Awakening", "Burn Heal",
+        "Potion", "Super Potion", "Revive", "Antidote", "Awakening", "Burn Heal",
         "Calcium", "Carbos", "Escape Rope", "Ether", "Everstone", "Full Heal",
         "Full Restore", "Hard Stone", "Heart Scale", "HP Up", "Ice Heal", "Iron",
         "Paralyze Heal", "Protein", "Rare Candy", "Repel", "Sea Incense", "Soothe Bell",
@@ -396,6 +518,21 @@ HOENN_DEX = {
 }
 
 
+# Concrete EPokemonAbility values embedded in the GE-1.0.0 Shipping executable. The generated
+# competitive metadata contains later-generation and custom ability names that this build cannot
+# deserialize; never expose those names as writable save enum values.
+RUNTIME_ABILITY_ENUMS = frozenset({
+    "AirLock", "Blaze", "Chlorophyll", "ClearBody", "CompoundEyes", "CuteCharm", "Damp",
+    "EarlyBird", "EffectSpore", "FlameBody", "Guts", "HugePower", "Illuminate", "InnerFocus",
+    "Intimidate", "KeenEye", "Levitate", "LiquidOoze", "MagmaArmor", "MagnetPull", "NaturalCure",
+    "None", "Oblivious", "Overgrow", "OwnTempo", "Pickup", "PoisonPoint", "PurePower", "RainDish",
+    "RockHead", "RoughSkin", "RunAway", "SandVeil", "ShedSkin", "ShieldDust", "Soundproof",
+    "SpeedBoost", "Static", "Steadfast", "StickyHold", "Sturdy", "Swarm", "SwiftSwim",
+    "Synchronize", "ThickFat", "Torrent", "Trace", "Truant", "VitalSpirit", "WaterVeil",
+    "WhiteSmoke", "WonderGuard",
+})
+
+
 SPECIES_INFO: dict[str, SpeciesInfo] = {}
 for _species_name, _raw in SPECIES_METADATA_RAW.items():
     SPECIES_INFO[_species_name.casefold()] = SpeciesInfo(
@@ -408,6 +545,7 @@ for _species_name, _raw in SPECIES_METADATA_RAW.items():
                 hidden=bool(item["hidden"]),
             )
             for item in _raw["abilities"]
+            if item["enum"] in RUNTIME_ABILITY_ENUMS and item["enum"] != "None"
         ),
         height_m=float(_raw["height_m"]),
         weight_kg=float(_raw["weight_kg"]),
@@ -467,11 +605,11 @@ TYPE_ORDER = (
     "Ground", "Flying", "Psychic", "Bug", "Rock", "Ghost", "Dragon", "Dark", "Steel", "Fairy",
 )
 TYPE_COLORS = {
-    "Normal": "#a8a878", "Fire": "#f08030", "Water": "#6890f0", "Electric": "#f8d030",
-    "Grass": "#78c850", "Ice": "#98d8d8", "Fighting": "#c03028", "Poison": "#a040a0",
-    "Ground": "#e0c068", "Flying": "#a890f0", "Psychic": "#f85888", "Bug": "#a8b820",
-    "Rock": "#b8a038", "Ghost": "#705898", "Dragon": "#7038f8", "Dark": "#705848",
-    "Steel": "#b8b8d0", "Fairy": "#ee99ac",
+    "Normal": "#a8a77a", "Fire": "#ee8130", "Water": "#6390f0", "Electric": "#f7d02c",
+    "Grass": "#7ac74c", "Ice": "#96d9d6", "Fighting": "#c22e28", "Poison": "#a33ea1",
+    "Ground": "#e2bf65", "Flying": "#a98ff3", "Psychic": "#f95587", "Bug": "#a6b91a",
+    "Rock": "#b6a136", "Ghost": "#735797", "Dragon": "#6f35fc", "Dark": "#705746",
+    "Steel": "#b7b7ce", "Fairy": "#d685ad",
 }
 
 # Attacking type -> defending types that differ from neutral effectiveness.
@@ -501,6 +639,18 @@ def type_defenses(types: tuple[str, ...]) -> dict[str, float]:
     return {
         attacking: _product(_TYPE_CHART.get(attacking, {}).get(defending, 1.0) for defending in types)
         for attacking in TYPE_ORDER
+    }
+
+
+def type_attacks(types: tuple[str, ...]) -> dict[str, float]:
+    """Return the best same-type attack multiplier available against each defending type."""
+    valid_types = tuple(type_name for type_name in types if type_name in TYPE_ORDER)
+    return {
+        defending: max(
+            (_TYPE_CHART.get(attacking, {}).get(defending, 1.0) for attacking in valid_types),
+            default=1.0,
+        )
+        for defending in TYPE_ORDER
     }
 
 

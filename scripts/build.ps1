@@ -41,16 +41,28 @@ try {
     Copy-Item -LiteralPath (Join-Path $tclSource "tk8.6") -Destination $tclStage -Recurse -Force
     $env:TCL_LIBRARY = Join-Path $tclStage "tcl8.6"
     $env:TK_LIBRARY = Join-Path $tclStage "tk8.6"
-    $buildTemp = Join-Path $projectRoot ".build_temp"
+    # Keep the elevated Windows build cache separate from sandbox-owned analysis files.
+    $buildTemp = Join-Path $projectRoot ".build_windows"
     New-Item -ItemType Directory -Path $buildTemp -Force | Out-Null
     $env:TEMP = $buildTemp
     $env:TMP = $buildTemp
-    & $python -B -m pytest -q --basetemp (Join-Path $buildTemp "pytest")
+    # A prior elevated/sandboxed run can leave a pytest directory owned by a different Windows
+    # security context. Use a fresh directory per build so pytest never has to delete that tree.
+    $pytestTemp = Join-Path $buildTemp ("pytest-" + [Guid]::NewGuid().ToString("N"))
+    & $python -B -m pytest -q -p no:cacheprovider --basetemp $pytestTemp
     if ($LASTEXITCODE -ne 0) {
         throw "Automated tests failed; build stopped."
     }
-    & $python -m PyInstaller --noconfirm --clean --onedir --windowed --name GammaEmeraldSaveEditor `
-        --paths src packaging\gui_launcher.py
+    $guiBuildArgs = @(
+        "-m", "PyInstaller", "--noconfirm", "--clean", "--onedir", "--windowed",
+        "--name", "GammaEmeraldSaveEditor", "--paths", "src"
+    )
+    $spriteDirectory = Join-Path $projectRoot "runtime_assets\pokemon_icons"
+    if (Test-Path -LiteralPath $spriteDirectory) {
+        $guiBuildArgs += @("--add-data", ($spriteDirectory + ";gamma_editor/assets/pokemon_icons"))
+    }
+    $guiBuildArgs += "packaging\gui_launcher.py"
+    & $python @guiBuildArgs
     if ($LASTEXITCODE -ne 0) {
         throw "GUI build failed."
     }

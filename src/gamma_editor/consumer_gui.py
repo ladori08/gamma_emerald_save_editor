@@ -15,7 +15,6 @@ from .catalog import (
     HOLDABLE_ITEM_NAMES,
     HOENN_DEX,
     ITEMS_BY_POCKET,
-    ITEM_BY_NAME,
     ITEM_NAMES,
     MET_TYPES,
     MOVES,
@@ -29,17 +28,25 @@ from .catalog import (
     STATUS_CONDITIONS,
     TYPE_COLORS,
     TYPE_ORDER,
+    base_pp_for_move,
     calculate_pokemon_stats,
     display_name,
+    learnset_for_species,
+    max_pp_for_move,
     nature_label,
+    pp_up_limit_for_move,
+    pp_ups_from_max_pp,
+    type_attacks,
     type_defenses,
 )
 from .domain import (
     BagEntry,
+    PokemonClonePreset,
     PokemonView,
     add_bag_item,
     bag_entries,
     box_names,
+    copy_pokemon_preset,
     create_pokemon,
     edit_bag_item,
     move_pokemon,
@@ -47,11 +54,32 @@ from .domain import (
     patch_domain_values,
     patch_pokemon,
     pokemon_creation_defaults,
+    pokemon_species_profile,
+    release_pokemon,
+    set_pokemon_preset,
     remove_bag_item,
     storage_pokemon,
 )
+from .evolution_data import evolution_family
 from .errors import GammaEditorError
 from .gvas import PropertyRecord, parse_gvas, patch_scalar
+from .item_mod_templates import ITEM_MOD_ARCHETYPES, TEMPLATE_BY_KEY, templates_for_archetype
+from .mod_builder import (
+    BALL_TYPES,
+    CUSTOM_ITEM_ID_BASE,
+    ItemModSpec,
+    ModBuilderError,
+    POKEMON_TYPES,
+    VITAMIN_EV_AMOUNTS,
+    VITAMIN_STATS,
+    allocate_custom_item_id,
+    build_item_mod,
+    custom_item_id_tag,
+    discover_toolchain,
+    install_item_mod,
+    installed_item,
+    uninstall_item_mod,
+)
 from .save_service import (
     LoadedSave,
     default_save_dir,
@@ -61,6 +89,7 @@ from .save_service import (
     restore_backup,
     write_save,
 )
+from .sprites import SpriteRepository
 
 
 APP_TITLE = "Gamma Emerald Save Editor"
@@ -70,6 +99,20 @@ ENUM_PREFIXES = {
     "Gender": "EPokemonGender",
     "StatusCondition": "ESTATUSEffect",
     "MetType": "EPokemonMetType",
+}
+MOVE_SOURCE_FILTERS = (
+    "All legal",
+    "Level-up (current level)",
+    "TM",
+    "HM",
+    "Egg",
+)
+MOVE_SOURCE_KEYS = {
+    "All legal": "all",
+    "Level-up (current level)": "level_up",
+    "TM": "tm",
+    "HM": "hm",
+    "Egg": "egg",
 }
 
 
@@ -82,6 +125,59 @@ def _number(value: object, fallback: int = 0) -> int:
         return int(float(value))
     except (TypeError, ValueError):
         return fallback
+
+
+def pokemon_showdown_preset(pokemon: PokemonView) -> str:
+    """Render the copied record as a familiar, readable Showdown-style set."""
+    fields = pokemon.fields
+    nickname = str(fields.get("Nickname", "")).strip()
+    title = pokemon.species if not nickname or nickname.casefold() == "none" else f"{nickname} ({pokemon.species})"
+    gender = str(fields.get("Gender", "")).split("::")[-1]
+    if gender in {"Male", "Female"}:
+        title += f" ({gender[0]})"
+    held_item = str(fields.get("HeldItem", "")).strip()
+    if held_item and held_item.casefold() != "none":
+        title += f" @ {held_item}"
+    lines = [title]
+    ability = display_name(str(fields.get("Ability", "None")).split("::")[-1])
+    if ability.casefold() != "none":
+        lines.append(f"Ability: {ability}")
+    lines.append(f"Level: {_number(fields.get('Level'), 1)}")
+    if bool(fields.get("bIsShiny", False)):
+        lines.append("Shiny: Yes")
+    stats = (
+        ("HP", "HP"), ("Attack", "Atk"), ("Defense", "Def"),
+        ("SpecialAttack", "SpA"), ("SpecialDefense", "SpD"), ("Speed", "Spe"),
+    )
+    evs = " / ".join(f"{_number(fields.get(name + '_EV'))} {label}" for name, label in stats)
+    lines.append("EVs: " + evs)
+    nature = display_name(str(fields.get("Nature", "Hardy")).split("::")[-1])
+    lines.append(f"{nature} Nature")
+    ivs = " / ".join(f"{_number(fields.get(name + '_IV'))} {label}" for name, label in stats)
+    lines.append("IVs: " + ivs)
+    lines.extend(f"- {display_name(str(move))}" for move in fields.get("MoveNames", ()) if str(move))
+    return "\n".join(lines)
+
+
+def party_set_target_slot(party_count: int, clicked_slot: int) -> int | None:
+    """Map any displayed empty Party card to the next packed-array position."""
+    if not 0 <= party_count < 6 or not party_count <= clicked_slot < 6:
+        return None
+    return party_count
+
+
+def _type_text_color(type_name: str) -> str:
+    color = TYPE_COLORS.get(type_name, "#a8a77a").lstrip("#")
+    red, green, blue = (int(color[index:index + 2], 16) for index in (0, 2, 4))
+    luminance = (red * 299 + green * 587 + blue * 114) / 1000
+    return "#ffffff" if luminance < 145 else "#111111"
+
+
+def _light_type_color(type_name: str, white_ratio: float = .72) -> str:
+    color = TYPE_COLORS.get(type_name, "#a8a77a").lstrip("#")
+    channels = [int(color[index:index + 2], 16) for index in (0, 2, 4)]
+    mixed = [round(channel + (255 - channel) * white_ratio) for channel in channels]
+    return "#" + "".join(f"{channel:02x}" for channel in mixed)
 
 
 def filter_choices(values: tuple[str, ...] | list[str], query: str) -> tuple[str, ...]:
@@ -354,7 +450,19 @@ class PokemonEditor(ttk.Frame):
         self.vars: dict[str, tk.Variable] = {}
         self.move_vars = [tk.StringVar() for _ in range(4)]
         self.current_pp_vars = [tk.StringVar(value="0") for _ in range(4)]
-        self.max_pp_vars = [tk.StringVar(value="0") for _ in range(4)]
+        self.pp_up_vars = [tk.StringVar(value="0") for _ in range(4)]
+        self.pp_max_vars = [tk.StringVar(value="—") for _ in range(4)]
+        self.move_filter_var = tk.StringVar(value=MOVE_SOURCE_FILTERS[0])
+        self.move_source_vars = [tk.StringVar(value="—") for _ in range(4)]
+        self.move_combos: list[SearchableCombobox] = []
+        self.current_pp_spins: list[ttk.Spinbox] = []
+        self.pp_up_spins: list[ttk.Spinbox] = []
+        self._pp_up_levels = [0, 0, 0, 0]
+        self._loading_move_fields = False
+        self._updating_pp_fields = False
+        self._evolution_redraw_id: str | None = None
+        self._stats_visual_redraw_id: str | None = None
+        self._move_chart_redraw_id: str | None = None
         self._build()
 
     def _build(self) -> None:
@@ -371,7 +479,7 @@ class PokemonEditor(ttk.Frame):
         body.grid(row=1, column=0, sticky="nsew")
         editor = ttk.Frame(body)
         preview = ttk.Frame(body, padding=(12, 6))
-        body.add(editor, weight=4)
+        body.add(editor, weight=3)
         body.add(preview, weight=1)
 
         self.sections = ttk.Notebook(editor)
@@ -387,13 +495,16 @@ class PokemonEditor(ttk.Frame):
         for frame in (main, stats, moves, met, misc):
             frame.columnconfigure(1, weight=1)
             frame.columnconfigure(3, weight=1)
+        main.rowconfigure(9, weight=1)
 
         self.species_combo = self._choice(main, "Species", "SpeciesData", [item.name for item in SPECIES], 0, 0)
         self.species_combo.bind("<<ComboboxSelected>>", self._on_species_changed)
         self.vars["SpeciesData"].trace_add("write", lambda *_args: self._on_species_text_changed())
         self._entry(main, "Nickname", "Nickname", 0, 2)
         self._spin(main, "Level", "Level", 1, 0, 1, 100)
-        self.vars["Level"].trace_add("write", lambda *_args: self._update_calculated_stats())
+        self.vars["Level"].trace_add(
+            "write", lambda *_args: (self._update_calculated_stats(), self._refresh_move_choices())
+        )
         self._entry(main, "EXP", "CurrentEXP", 1, 2)
         self.nature_combo = self._choice(main, "Nature", "Nature", list(NATURE_LABELS), 2, 0)
         self.nature_combo.bind("<<ComboboxSelected>>", lambda _event: self._update_calculated_stats())
@@ -402,16 +513,55 @@ class PokemonEditor(ttk.Frame):
         self.ability_combo = self._choice(main, "Ability", "Ability", [], 3, 0)
         self.ability_combo.bind("<<ComboboxSelected>>", self._on_ability_changed)
         self._readonly(main, "Ability slot", "AbilitySlot", 3, 2)
-        self.held_item_combo = self._choice(main, "Held item", "HeldItem", list(HOLDABLE_ITEM_NAMES), 4, 0)
+        self.held_item_combo = self._choice(main, "Held item", "HeldItem", list(self.app._held_item_names()), 4, 0)
         self._spin(main, "Friendship", "Friendship", 4, 2, 0, 255)
         self._check(main, "Shiny", "bIsShiny", 5, 0)
         self._check(main, "Fainted", "bIsFainted", 5, 2)
+        type_bar = ttk.Frame(main)
+        type_bar.grid(row=6, column=0, columnspan=4, sticky="w", pady=(7, 0))
+        ttk.Label(type_bar, text="Types", style="Bold.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 10))
+        self.main_type_labels: list[tk.Label] = []
+        for index in range(2):
+            label = tk.Label(
+                type_bar, text="—", width=10, height=1, relief="solid", borderwidth=1,
+                font=("Segoe UI", 8, "bold"), padx=5, pady=2,
+            )
+            label.grid(row=0, column=index + 1, padx=(0, 5))
+            self.main_type_labels.append(label)
+        defaults_bar = ttk.Frame(main)
+        defaults_bar.grid(row=7, column=0, columnspan=4, sticky="ew", pady=(9, 0))
+        ttk.Button(
+            defaults_bar,
+            text="Load Species Defaults",
+            command=self._load_species_defaults_into_form,
+        ).pack(side="left")
+        self.species_defaults_var = tk.StringVar(
+            value="Selecting a Species loads its Lv. 5 base profile, starting moves, stats and met defaults."
+        )
+        ttk.Label(
+            defaults_bar,
+            textvariable=self.species_defaults_var,
+            style="Muted.TLabel",
+            wraplength=620,
+        ).pack(side="left", padx=(12, 0), fill="x", expand=True)
         ttk.Label(
             main,
             text="Type to live-search any dropdown. Ability is Species-filtered; (H) marks a Hidden Ability.",
             style="Muted.TLabel",
             wraplength=720,
-        ).grid(row=6, column=0, columnspan=4, sticky="w", pady=(14, 0))
+        ).grid(row=8, column=0, columnspan=4, sticky="w", pady=(8, 8))
+        evolution_frame = ttk.LabelFrame(main, text="Evolution Chart", padding=6)
+        evolution_frame.grid(row=9, column=0, columnspan=4, sticky="nsew")
+        evolution_frame.rowconfigure(0, weight=1)
+        evolution_frame.columnconfigure(0, weight=1)
+        self.evolution_canvas = tk.Canvas(
+            evolution_frame,
+            height=220,
+            background="#fbfcfd",
+            highlightthickness=0,
+        )
+        self.evolution_canvas.grid(row=0, column=0, sticky="nsew")
+        self.evolution_canvas.bind("<Configure>", self._queue_evolution_redraw)
 
         self._entry(stats, "Current HP", "CurrentHP", 0, 0)
         self._entry(stats, "Max HP", "MaxHP", 0, 2)
@@ -442,47 +592,133 @@ class PokemonEditor(ttk.Frame):
         stat_buttons.grid(row=10, column=0, columnspan=5, sticky="w", pady=(12, 0))
         ttk.Button(stat_buttons, text="Max IVs", command=lambda: self._fill_stats("IV", 31)).pack(side="left")
         ttk.Button(stat_buttons, text="Clear EVs", command=lambda: self._fill_stats("EV", 0)).pack(side="left", padx=6)
-        ttk.Button(stat_buttons, text="Balanced 510 EV", command=self._balanced_evs).pack(side="left")
+        ttk.Button(stat_buttons, text="Balanced 510 EV", command=self._balanced_evs).pack(side="left", padx=(0, 6))
+        ttk.Button(stat_buttons, text="Max all EVs (252)", command=self._max_all_evs).pack(side="left")
+        stat_options = ttk.Frame(stats)
+        stat_options.grid(row=11, column=0, columnspan=5, sticky="w", pady=(7, 0))
         ttk.Checkbutton(
-            stat_buttons,
+            stat_options,
             text="Allow EV total over 510 (editor only)",
             variable=self.app.allow_ev_over_510,
             command=self._update_ev_total,
-        ).pack(side="left", padx=(16, 0))
+        ).pack(side="left")
         ttk.Checkbutton(
-            stat_buttons,
+            stat_options,
             text="Sync calculated Max HP",
             variable=self.sync_calculated_hp,
             command=self._update_calculated_stats,
         ).pack(side="left", padx=(16, 0))
         self.ev_total_var = tk.StringVar(value="EV total: 0 / 510")
         ttk.Label(stats, textvariable=self.ev_total_var, style="Muted.TLabel").grid(
-            row=11, column=0, columnspan=5, sticky="w", pady=(8, 0)
+            row=12, column=0, columnspan=5, sticky="w", pady=(7, 0)
         )
         self.stat_formula_var = tk.StringVar(value="Choose a mapped Species to calculate final stats.")
         ttk.Label(stats, textvariable=self.stat_formula_var, style="Muted.TLabel", wraplength=760).grid(
-            row=12, column=0, columnspan=5, sticky="w", pady=(6, 0)
+            row=13, column=0, columnspan=5, sticky="w", pady=(5, 0)
         )
+        stats.rowconfigure(14, weight=1)
+        stat_visuals = ttk.Panedwindow(stats, orient="horizontal")
+        stat_visuals.grid(row=14, column=0, columnspan=5, sticky="nsew", pady=(10, 0))
+        stat_chart_frame = ttk.LabelFrame(stat_visuals, text="Final Stats", padding=4)
+        type_chart_frame = ttk.LabelFrame(stat_visuals, text="Type Matchups", padding=4)
+        stat_visuals.add(stat_chart_frame, weight=1)
+        stat_visuals.add(type_chart_frame, weight=1)
+        stat_chart_frame.rowconfigure(0, weight=1)
+        stat_chart_frame.columnconfigure(0, weight=1)
+        type_chart_frame.rowconfigure(0, weight=1)
+        type_chart_frame.columnconfigure(0, weight=1)
+        self.final_stats_canvas = tk.Canvas(
+            stat_chart_frame, height=170, background="#fbfcfd", highlightthickness=0,
+        )
+        self.final_stats_canvas.grid(row=0, column=0, sticky="nsew")
+        self.type_matchup_canvas = tk.Canvas(
+            type_chart_frame, height=170, background="#fbfcfd", highlightthickness=0,
+        )
+        self.type_matchup_canvas.grid(row=0, column=0, sticky="nsew")
+        self.final_stats_canvas.bind("<Configure>", self._queue_stats_visual_redraw)
+        self.type_matchup_canvas.bind("<Configure>", self._queue_stats_visual_redraw)
 
-        ttk.Label(moves, text="Move", style="Bold.TLabel").grid(row=0, column=0, sticky="w")
-        ttk.Label(moves, text="Current PP", style="Bold.TLabel").grid(row=0, column=1, sticky="w")
-        ttk.Label(moves, text="Max PP", style="Bold.TLabel").grid(row=0, column=2, sticky="w")
-        move_values = [""] + [item.name for item in MOVES]
+        moves.columnconfigure(0, weight=1)
+        moves.columnconfigure(3, weight=1)
+        ttk.Label(moves, text="Show moves from").grid(row=0, column=0, sticky="w")
+        self.move_filter_combo = SearchableCombobox(
+            moves, textvariable=self.move_filter_var, values=MOVE_SOURCE_FILTERS, width=30
+        )
+        self.move_filter_combo.grid(row=0, column=1, columnspan=2, sticky="ew", padx=(8, 12), pady=(0, 10))
+        self.move_filter_combo.bind("<<ComboboxSelected>>", lambda _event: self._refresh_move_choices())
+        self.move_filter_var.trace_add(
+            "write",
+            lambda *_args: self._refresh_move_choices()
+            if str(self.move_filter_var.get()) in MOVE_SOURCE_KEYS else None,
+        )
+        self.move_catalog_var = tk.StringVar(value="Choose a Species to load its exact GE-1.0.0 learnset.")
+        ttk.Label(moves, textvariable=self.move_catalog_var, style="Muted.TLabel").grid(
+            row=0, column=3, sticky="w", pady=(0, 10)
+        )
+        ttk.Label(moves, text="Move", style="Bold.TLabel").grid(row=1, column=0, sticky="w")
+        ttk.Label(moves, text="PP", style="Bold.TLabel").grid(row=1, column=1, sticky="w")
+        ttk.Label(moves, text="PP Up", style="Bold.TLabel").grid(row=1, column=2, sticky="w")
+        ttk.Label(moves, text="Learn source", style="Bold.TLabel").grid(row=1, column=3, sticky="w")
         for index in range(4):
-            SearchableCombobox(moves, textvariable=self.move_vars[index], values=move_values, width=30).grid(
-                row=index + 1, column=0, sticky="ew", padx=(0, 8), pady=5
+            combo = SearchableCombobox(moves, textvariable=self.move_vars[index], values=(), width=30, state="disabled")
+            combo.grid(row=index + 2, column=0, sticky="ew", padx=(0, 8), pady=5)
+            self.move_combos.append(combo)
+            pp_frame = ttk.Frame(moves)
+            pp_frame.grid(row=index + 2, column=1, sticky="w", padx=(0, 8), pady=5)
+            pp_spin = ttk.Spinbox(pp_frame, textvariable=self.current_pp_vars[index], from_=0, to=0, width=7)
+            pp_spin.pack(side="left")
+            ttk.Label(pp_frame, textvariable=self.pp_max_vars[index], style="Muted.TLabel").pack(side="left", padx=(5, 0))
+            self.current_pp_spins.append(pp_spin)
+            pp_up_spin = ttk.Spinbox(
+                moves, textvariable=self.pp_up_vars[index], from_=0, to=3, width=7,
+                command=lambda move_index=index: self._on_pp_up_changed(move_index),
             )
-            ttk.Spinbox(moves, textvariable=self.current_pp_vars[index], from_=0, to=99, width=10).grid(
-                row=index + 1, column=1, sticky="w", padx=(0, 8), pady=5
+            pp_up_spin.grid(row=index + 2, column=2, sticky="w", pady=5)
+            self.pp_up_spins.append(pp_up_spin)
+            ttk.Label(moves, textvariable=self.move_source_vars[index], style="Muted.TLabel").grid(
+                row=index + 2, column=3, sticky="w", padx=(12, 0), pady=5
             )
-            ttk.Spinbox(moves, textvariable=self.max_pp_vars[index], from_=0, to=99, width=10).grid(
-                row=index + 1, column=2, sticky="w", pady=5
+            self.move_vars[index].trace_add(
+                "write", lambda *_args, move_index=index: self._on_move_value_changed(move_index)
+            )
+            self.pp_up_vars[index].trace_add(
+                "write", lambda *_args, move_index=index: self._on_pp_up_changed(move_index)
             )
         ttk.Label(
             moves,
-            text="Up to four verified move Blueprint paths. Current PP cannot exceed Max PP.",
+            text=(
+                "Level-up choices are capped at the edited level. TM, HM and Egg compatibility comes from the "
+                "selected Species DataAsset. PP Up is limited to 0–3 and Max PP is calculated from the move's "
+                "GE-1.0.0 Base PP."
+            ),
             style="Muted.TLabel",
-        ).grid(row=6, column=0, columnspan=3, sticky="w", pady=(12, 0))
+            wraplength=900,
+        ).grid(row=6, column=0, columnspan=4, sticky="w", pady=(12, 0))
+        moves.rowconfigure(7, weight=1)
+        move_chart_area = ttk.Frame(moves)
+        move_chart_area.grid(row=7, column=0, columnspan=4, sticky="nsew", pady=(10, 0))
+        for grid_index in range(2):
+            move_chart_area.rowconfigure(grid_index, weight=1)
+            move_chart_area.columnconfigure(grid_index, weight=1)
+        self.move_attack_frames: list[ttk.LabelFrame] = []
+        self.move_attack_canvases: list[tk.Canvas] = []
+        for index in range(4):
+            chart_row, chart_column = divmod(index, 2)
+            chart_frame = ttk.LabelFrame(move_chart_area, text=f"Move {index + 1}", padding=3)
+            chart_frame.grid(
+                row=chart_row, column=chart_column, sticky="nsew",
+                padx=(0, 4) if chart_column == 0 else (4, 0),
+                pady=(0, 4) if chart_row == 0 else (4, 0),
+            )
+            chart_frame.rowconfigure(0, weight=1)
+            chart_frame.columnconfigure(0, weight=1)
+            chart_canvas = tk.Canvas(
+                chart_frame, height=90, background="#fbfcfd", highlightthickness=0,
+            )
+            chart_canvas.grid(row=0, column=0, sticky="nsew")
+            chart_canvas.bind("<Configure>", self._queue_move_chart_redraw)
+            self.move_attack_frames.append(chart_frame)
+            self.move_attack_canvases.append(chart_canvas)
 
         self._entry(met, "Met location", "MetLocationOverride", 0, 0)
         self._spin(met, "Met level", "MetLevel", 0, 2, 0, 100)
@@ -505,8 +741,10 @@ class PokemonEditor(ttk.Frame):
         self._check(misc, "Follower out", "bIsFollowerOut", 4, 0)
 
         ttk.Label(preview, text="Preview", style="SectionTitle.TLabel").pack(anchor="w")
-        self.preview = tk.Canvas(preview, width=230, height=300, highlightthickness=1, highlightbackground="#9aa4ad")
+        self.preview = tk.Canvas(preview, width=250, height=340, highlightthickness=1, highlightbackground="#9aa4ad")
         self.preview.pack(fill="both", expand=True, pady=(8, 0))
+        self.preview.bind("<Configure>", lambda _event: self._draw_preview(self.current))
+        self._update_main_type_badges()
         self._draw_preview(None)
 
     def _entry(self, parent, label: str, field: str, row: int, column: int, span: int = 1) -> None:
@@ -541,8 +779,170 @@ class PokemonEditor(ttk.Frame):
             row=row, column=column + 1, sticky="ew", padx=(0, 14), pady=5
         )
 
+    def _refresh_move_choices(self) -> None:
+        if not hasattr(self, "move_combos") or not self.move_combos:
+            return
+        species_name = str(self.vars["SpeciesData"].get()).strip()
+        learnset = learnset_for_species(species_name)
+        level = max(1, _number(self.vars["Level"].get(), 1))
+        source_key = MOVE_SOURCE_KEYS.get(str(self.move_filter_var.get()), "all")
+        choices = learnset.choices(level=level, source=source_key) if learnset is not None else ()
+        values = ("", *(move.name for move in choices))
+        for combo in self.move_combos:
+            combo.set_source_values(values, enabled=learnset is not None)
+        if learnset is None:
+            self.move_catalog_var.set("Choose a Species to load its exact GE-1.0.0 learnset.")
+        else:
+            source_name = str(self.move_filter_var.get())
+            self.move_catalog_var.set(f"{len(choices)} {source_name.lower()} choice(s) at Lv. {level}")
+        for index in range(len(self.move_vars)):
+            self._update_move_source_label(index)
+
+    def _on_move_value_changed(self, index: int) -> None:
+        self._update_move_source_label(index)
+        self._queue_move_chart_redraw()
+        move_name = str(self.move_vars[index].get()).strip()
+        if move_name.casefold() not in MOVES_BY_NAME:
+            self.pp_max_vars[index].set("—")
+            self.current_pp_spins[index].configure(from_=0, to=0, state="disabled")
+            self.pp_up_spins[index].configure(from_=0, to=0, state="disabled")
+            if not self._loading_move_fields:
+                self.current_pp_vars[index].set("")
+                self.pp_up_vars[index].set("0")
+                self._pp_up_levels[index] = 0
+            return
+        if not self._loading_move_fields:
+            self._updating_pp_fields = True
+            try:
+                self.pp_up_vars[index].set("0")
+                self.current_pp_vars[index].set(str(max_pp_for_move(move_name, 0)))
+                self._pp_up_levels[index] = 0
+            finally:
+                self._updating_pp_fields = False
+        self._refresh_pp_row(index)
+
+    def _refresh_pp_row(self, index: int) -> None:
+        move_name = str(self.move_vars[index].get()).strip()
+        if move_name.casefold() not in MOVES_BY_NAME:
+            return
+        limit = pp_up_limit_for_move(move_name)
+        try:
+            pp_ups = int(self.pp_up_vars[index].get())
+        except ValueError:
+            pp_ups = 0
+        pp_ups = max(0, min(limit, pp_ups))
+        maximum = max_pp_for_move(move_name, pp_ups)
+        base = base_pp_for_move(move_name)
+        self.current_pp_spins[index].configure(from_=0, to=maximum, state="normal")
+        self.pp_up_spins[index].configure(from_=0, to=limit, state="normal" if limit else "disabled")
+        self.pp_max_vars[index].set(f"/ {maximum} max (Base {base})")
+
+    def _on_pp_up_changed(self, index: int) -> None:
+        if self._loading_move_fields or self._updating_pp_fields:
+            return
+        move_name = str(self.move_vars[index].get()).strip()
+        if move_name.casefold() not in MOVES_BY_NAME:
+            return
+        try:
+            requested = int(self.pp_up_vars[index].get())
+        except ValueError:
+            return
+        limit = pp_up_limit_for_move(move_name)
+        new_level = max(0, min(limit, requested))
+        old_level = max(0, min(limit, self._pp_up_levels[index]))
+        old_maximum = max_pp_for_move(move_name, old_level)
+        new_maximum = max_pp_for_move(move_name, new_level)
+        current = _number(self.current_pp_vars[index].get(), old_maximum)
+        self._updating_pp_fields = True
+        try:
+            if requested != new_level:
+                self.pp_up_vars[index].set(str(new_level))
+            self.current_pp_vars[index].set(str(max(0, min(new_maximum, current + new_maximum - old_maximum))))
+            self._pp_up_levels[index] = new_level
+        finally:
+            self._updating_pp_fields = False
+        self._refresh_pp_row(index)
+
+    def _update_move_source_label(self, index: int) -> None:
+        if not hasattr(self, "move_source_vars"):
+            return
+        move_name = str(self.move_vars[index].get()).strip()
+        if not move_name:
+            self.move_source_vars[index].set("—")
+            return
+        species_name = str(self.vars["SpeciesData"].get()).strip()
+        learnset = learnset_for_species(species_name)
+        if learnset is None:
+            self.move_source_vars[index].set("Choose a Species")
+            return
+        level = max(1, _number(self.vars["Level"].get(), 1))
+        labels = learnset.source_labels(move_name, level=level)
+        self.move_source_vars[index].set(" / ".join(labels) if labels else "Not legal for this Species")
+
+    def _queue_move_chart_redraw(self, _event=None) -> None:
+        if not hasattr(self, "move_attack_canvases"):
+            return
+        if self._move_chart_redraw_id is not None:
+            self.after_cancel(self._move_chart_redraw_id)
+        self._move_chart_redraw_id = self.after_idle(self._draw_move_attack_charts)
+
+    def _draw_move_attack_charts(self) -> None:
+        self._move_chart_redraw_id = None
+        for index in range(4):
+            self._draw_move_attack_chart(index)
+
+    def _draw_move_attack_chart(self, index: int) -> None:
+        frame = self.move_attack_frames[index]
+        canvas = self.move_attack_canvases[index]
+        canvas.delete("all")
+        width = canvas.winfo_width()
+        height = canvas.winfo_height()
+        move_name = str(self.move_vars[index].get()).strip()
+        move = MOVES_BY_NAME.get(move_name.casefold())
+        if move is None:
+            frame.configure(text=f"Move {index + 1}")
+            if width >= 80 and height >= 35:
+                canvas.create_text(
+                    width / 2, height / 2, text="Choose a move to view its attack type chart.",
+                    fill="#66717a", font=("Segoe UI", 8), width=max(70, width - 18),
+                )
+            return
+        frame.configure(text=f"{index + 1} · {move.name} · {move.category}")
+        if width < 100 or height < 45:
+            return
+        values = type_attacks((move.category,))
+        columns = 9
+        x_margin = 4
+        y_margin = 3
+        cell_width = max(16, (width - x_margin * 2) / columns)
+        cell_height = max(18, (height - y_margin * 2) / 2)
+        type_height = max(7, cell_height * .46)
+        type_font = 6 if cell_width < 27 else 7
+        value_font = 6 if cell_width < 27 or cell_height < 23 else 8
+        for type_index, type_name in enumerate(TYPE_ORDER):
+            row, column = divmod(type_index, columns)
+            x0 = x_margin + column * cell_width
+            y0 = y_margin + row * cell_height
+            x1 = x_margin + (column + 1) * cell_width - 1
+            y1 = min(height - 2, y0 + cell_height - 1)
+            split = min(y1 - 8, y0 + type_height)
+            canvas.create_rectangle(x0, y0, x1, split, fill=TYPE_COLORS[type_name], outline="#ffffff")
+            canvas.create_text(
+                (x0 + x1) / 2, (y0 + split) / 2, text=type_name[:3].upper(),
+                font=("Segoe UI", type_font, "bold"), fill=_type_text_color(type_name),
+            )
+            multiplier = float(values[type_name])
+            background, foreground = self._multiplier_style(multiplier)
+            canvas.create_rectangle(x0, split, x1, y1, fill=background, outline="#e1e5e8")
+            canvas.create_text(
+                (x0 + x1) / 2, (split + y1) / 2,
+                text=self._multiplier_text(multiplier) + "×",
+                font=("Segoe UI", value_font, "bold"), fill=foreground,
+            )
+
     def _refresh_species_dependent(self, *, choose_default: bool = False) -> None:
         species_name = str(self.vars["SpeciesData"].get()).strip()
+        self._refresh_move_choices()
         info = SPECIES_INFO.get(species_name.casefold())
         if info is None or not info.abilities:
             current = str(self.vars["Ability"].get()).strip() or "None"
@@ -559,7 +959,7 @@ class PokemonEditor(ttk.Frame):
             }),
             None,
         )
-        if selected is None and (choose_default or not current):
+        if selected is None and (choose_default or not current or current.casefold() == "none"):
             selected = info.abilities[0]
         self.ability_combo.set_source_values(labels)
         if selected is not None:
@@ -567,14 +967,202 @@ class PokemonEditor(ttk.Frame):
             self.vars["AbilitySlot"].set(str(selected.slot))
 
     def _on_species_changed(self, _event=None) -> None:
-        self._refresh_species_dependent(choose_default=True)
-        self._update_calculated_stats()
+        self._load_species_defaults_into_form()
+
+    @staticmethod
+    def _types_for_species(species_name: str) -> tuple[str, ...]:
+        info = SPECIES_INFO.get(species_name.casefold())
+        if info is not None and info.types:
+            return info.types
+        species = SPECIES_BY_NAME.get(species_name.casefold())
+        return (species.category,) if species is not None else ()
+
+    def _update_main_type_badges(self) -> None:
+        if not hasattr(self, "main_type_labels"):
+            return
+        species_name = str(self.vars["SpeciesData"].get()).strip()
+        types = self._types_for_species(species_name)
+        for index, label in enumerate(self.main_type_labels):
+            if index >= len(types):
+                if index == 0:
+                    label.grid()
+                    label.configure(text="—", bg="#e5e9ec", fg="#55616a")
+                else:
+                    label.grid_remove()
+                continue
+            type_name = types[index]
+            label.grid()
+            label.configure(
+                text=type_name.upper(), bg=TYPE_COLORS[type_name], fg=_type_text_color(type_name),
+            )
 
     def _on_species_text_changed(self) -> None:
         species_name = str(self.vars["SpeciesData"].get()).strip()
         if species_name.casefold() in SPECIES_BY_NAME:
             self._refresh_species_dependent(choose_default=False)
+        else:
+            self._refresh_move_choices()
         self._update_calculated_stats()
+        self._update_main_type_badges()
+        self._queue_evolution_redraw()
+        if hasattr(self, "preview"):
+            self._draw_preview(self.current)
+
+    def _load_species_defaults_into_form(self) -> None:
+        document = self.app.current_document()
+        species_name = str(self.vars["SpeciesData"].get()).strip()
+        species = SPECIES_BY_NAME.get(species_name.casefold())
+        if document is None or species is None:
+            self.species_defaults_var.set("Choose an exact GE-1.0.0 Species before loading defaults.")
+            return
+        try:
+            profile = pokemon_species_profile(document, species.name, level=5)
+        except GammaEditorError as exc:
+            self.species_defaults_var.set(str(exc))
+            return
+
+        # Species conversion keeps the record's collision-free identity and ownership. Everything
+        # species/gameplay-derived is reset in the form and remains staged until Apply + Save.
+        preserved = {
+            "PokemonID", "OriginalTrainerName", "CurrentTrainerName",
+            "OriginalTrainerID", "CurrentTrainerID",
+        } if self.current is not None and self.current.occupied else set()
+        self._loading_move_fields = True
+        try:
+            for field, value in profile.scalar_defaults.items():
+                var = self.vars.get(field)
+                if var is None or field in preserved:
+                    continue
+                if field == "Nature":
+                    value = nature_label(_enum_leaf(value))
+                elif field in ENUM_PREFIXES:
+                    value = _enum_leaf(value)
+                var.set(bool(value) if isinstance(var, tk.BooleanVar) else str(value))
+            for index in range(4):
+                if index < len(profile.moves):
+                    self.move_vars[index].set(profile.moves[index].name)
+                    self.current_pp_vars[index].set(str(profile.current_pp[index]))
+                    self.pp_up_vars[index].set("0")
+                else:
+                    self.move_vars[index].set("")
+                    self.current_pp_vars[index].set("")
+                    self.pp_up_vars[index].set("0")
+                self._pp_up_levels[index] = 0
+        finally:
+            self._loading_move_fields = False
+        self.sync_calculated_hp.set(True)
+        self._refresh_species_dependent(choose_default=True)
+        for index in range(4):
+            self._refresh_pp_row(index)
+        self._update_ev_total()
+        self._update_calculated_stats()
+        self._draw_preview(self.current)
+        self._queue_evolution_redraw()
+        mode = "conversion" if preserved else "creation"
+        self.species_defaults_var.set(
+            f"Loaded {species.name} Lv. 5 {mode} profile: Ability, starting moves/PP, HP, IV/EV, status and met data."
+        )
+
+    def _queue_evolution_redraw(self, _event=None) -> None:
+        if not hasattr(self, "evolution_canvas"):
+            return
+        if self._evolution_redraw_id is not None:
+            self.after_cancel(self._evolution_redraw_id)
+        self._evolution_redraw_id = self.after_idle(self._draw_evolution_chart)
+
+    def _draw_evolution_chart(self) -> None:
+        self._evolution_redraw_id = None
+        canvas = self.evolution_canvas
+        canvas.delete("all")
+        species_name = str(self.vars["SpeciesData"].get()).strip()
+        species = SPECIES_BY_NAME.get(species_name.casefold())
+        width = max(canvas.winfo_width(), 240)
+        height = max(canvas.winfo_height(), 190)
+        if species is None:
+            canvas.create_text(
+                width / 2,
+                height / 2,
+                text="Choose a Species to view its evolution family.",
+                fill="#66717a",
+                font=("Segoe UI", 10),
+            )
+            return
+        layers, edges = evolution_family(species.name)
+        # Prefer the old-editor-style horizontal chart. A very narrow but tall
+        # pane can still switch to vertical; ordinary and minimum app sizes
+        # remain horizontal because that makes better use of their short chart.
+        horizontal = width >= 320 or height < 260 or len(layers) <= 2
+        largest_layer = max(len(layer) for layer in layers)
+        node_half_width = 44 if width >= 420 else 36
+        row_gap = height / (largest_layer + 1)
+        node_half_height = min(38, max(22, row_gap / 2 - 4))
+        positions: dict[str, tuple[float, float]] = {}
+        if horizontal:
+            x_margin = node_half_width + 20
+            for layer_index, layer in enumerate(layers):
+                x = width / 2 if len(layers) == 1 else x_margin + layer_index * (width - 2 * x_margin) / (len(layers) - 1)
+                for item_index, name in enumerate(layer):
+                    y = (item_index + 1) * height / (len(layer) + 1)
+                    positions[name] = (x, y)
+        else:
+            y_margin = 48
+            for layer_index, layer in enumerate(layers):
+                y = height / 2 if len(layers) == 1 else y_margin + layer_index * (height - 2 * y_margin) / (len(layers) - 1)
+                for item_index, name in enumerate(layer):
+                    x = (item_index + 1) * width / (len(layer) + 1)
+                    positions[name] = (x, y)
+
+        for edge in edges:
+            source_x, source_y = positions[edge.source]
+            target_x, target_y = positions[edge.target]
+            if horizontal:
+                start = (source_x + node_half_width + 3, source_y)
+                end = (target_x - node_half_width - 3, target_y)
+            else:
+                start = (source_x, source_y + node_half_height + 2)
+                end = (target_x, target_y - node_half_height - 2)
+            canvas.create_line(*start, *end, fill="#66717a", width=2, arrow="last", arrowshape=(8, 10, 4))
+            label_x = (start[0] + end[0]) / 2
+            label_y = (start[1] + end[1]) / 2 - (10 if horizontal else 0)
+            label = canvas.create_text(
+                label_x,
+                label_y,
+                text=edge.condition,
+                fill="#55616a",
+                font=("Segoe UI", 8),
+                width=110,
+            )
+            bounds = canvas.bbox(label)
+            if bounds:
+                background = canvas.create_rectangle(*bounds, fill="#fbfcfd", outline="")
+                canvas.tag_lower(background, label)
+
+        for name, (x, y) in positions.items():
+            selected = name.casefold() == species.name.casefold()
+            canvas.create_rectangle(
+                x - node_half_width,
+                y - node_half_height,
+                x + node_half_width,
+                y + node_half_height,
+                fill="#fff4cf" if selected else "#ffffff",
+                outline="#e3a008" if selected else "#9aa4ad",
+                width=2 if selected else 1,
+            )
+            image = self.app.sprites.get(name, 32)
+            compact = node_half_height < 32
+            icon_y = y - (8 if compact else 12)
+            if image is not None:
+                canvas.create_image(x, icon_y, image=image)
+            else:
+                initials = "".join(part[0] for part in name.split()[:2]).upper() or "?"
+                canvas.create_text(x, icon_y, text=initials, font=("Segoe UI", 10, "bold"), fill="#46515a")
+            canvas.create_text(
+                x,
+                y + (17 if compact else 24),
+                text=name,
+                font=("Segoe UI", 8 if compact else 9, "bold" if selected else "normal"),
+                width=node_half_width * 2 - 4,
+            )
 
     def _on_ability_changed(self, _event=None) -> None:
         info = SPECIES_INFO.get(str(self.vars["SpeciesData"].get()).strip().casefold())
@@ -603,10 +1191,151 @@ class PokemonEditor(ttk.Frame):
             self.vars[stat + "_EV"].set(str(value))
         self._update_ev_total()
 
+    def _max_all_evs(self) -> None:
+        self.app.allow_ev_over_510.set(True)
+        self._fill_stats("EV", 252)
+        self._update_calculated_stats()
+
     def _update_ev_total(self) -> None:
         total = sum(_number(self.vars[field].get()) for field in self.vars if field.endswith("_EV"))
-        suffix = "editor limit disabled; game-side behavior unverified" if self.app.allow_ev_over_510.get() else "max 510"
+        suffix = "510 cap disabled" if self.app.allow_ev_over_510.get() else "max 510"
         self.ev_total_var.set(f"EV total: {total} ({suffix})")
+
+    def _queue_stats_visual_redraw(self, _event=None) -> None:
+        if not hasattr(self, "final_stats_canvas"):
+            return
+        if self._stats_visual_redraw_id is not None:
+            self.after_cancel(self._stats_visual_redraw_id)
+        self._stats_visual_redraw_id = self.after_idle(self._draw_stats_visuals)
+
+    def _draw_stats_visuals(self) -> None:
+        self._stats_visual_redraw_id = None
+        self._draw_final_stats_chart()
+        self._draw_type_matchups()
+
+    def _draw_final_stats_chart(self) -> None:
+        canvas = self.final_stats_canvas
+        canvas.delete("all")
+        width = canvas.winfo_width()
+        height = canvas.winfo_height()
+        if width < 80 or height < 80:
+            return
+        rows = (
+            ("HP", "HP"), ("Atk", "Attack"), ("Def", "Defense"),
+            ("SpA", "SpecialAttack"), ("SpD", "SpecialDefense"), ("Spe", "Speed"),
+        )
+        try:
+            values = [int(self.final_stat_vars[key].get()) for _label, key in rows]
+        except ValueError:
+            canvas.create_text(
+                width / 2, height / 2, text="Choose a mapped Species to chart final stats.",
+                fill="#66717a", font=("Segoe UI", 9), width=max(100, width - 24),
+            )
+            return
+        left, right, top, bottom = 18, 12, 34, 28
+        chart_width = max(1, width - left - right)
+        chart_height = max(1, height - top - bottom)
+        ceiling = max(10, max(values))
+        slot_width = chart_width / len(rows)
+        bar_width = max(8, min(34, slot_width * .58))
+        colors = ("#ef5350", "#ff9f43", "#f2c94c", "#42a5f5", "#66bb6a", "#ab75dc")
+        for fraction in (.25, .5, .75, 1.0):
+            y = top + chart_height * (1 - fraction)
+            canvas.create_line(left, y, width - right, y, fill="#dfe4e8", dash=(2, 3))
+        for index, ((label, _key), value, color) in enumerate(zip(rows, values, colors)):
+            x = left + slot_width * (index + .5)
+            bar_height = chart_height * value / ceiling
+            y = top + chart_height - bar_height
+            canvas.create_rectangle(
+                x - bar_width / 2, y, x + bar_width / 2, top + chart_height,
+                fill=color, outline="#ffffff",
+            )
+            canvas.create_text(x, max(22, y - 8), text=str(value), font=("Segoe UI", 8, "bold"), fill="#30363b")
+            canvas.create_text(x, height - 13, text=label, font=("Segoe UI", 8), fill="#4f5961")
+        level = _number(self.vars["Level"].get(), 1)
+        canvas.create_text(
+            left, 10, anchor="w", text=f"Lv. {level} · highest bar = {ceiling}",
+            font=("Segoe UI", 8), fill="#66717a",
+        )
+
+    @staticmethod
+    def _multiplier_text(value: float) -> str:
+        return "¼" if value == .25 else "½" if value == .5 else f"{int(value) if value.is_integer() else value:g}"
+
+    @staticmethod
+    def _multiplier_style(value: float) -> tuple[str, str]:
+        if value == 0:
+            return "#343a40", "#ffffff"
+        if value <= .25:
+            return "#8e0000", "#ffffff"
+        if value < 1:
+            return "#c62828", "#ffffff"
+        if value >= 4:
+            return "#2e7d32", "#ffffff"
+        if value > 1:
+            return "#66a80f", "#ffffff"
+        return "#ffffff", "#30363b"
+
+    def _draw_type_matchups(self) -> None:
+        canvas = self.type_matchup_canvas
+        canvas.delete("all")
+        width = canvas.winfo_width()
+        height = canvas.winfo_height()
+        if width < 100 or height < 100:
+            return
+        species_name = str(self.vars["SpeciesData"].get()).strip()
+        info = SPECIES_INFO.get(species_name.casefold())
+        if info is None:
+            canvas.create_text(
+                width / 2, height / 2, text="Choose a mapped Species to chart type matchups.",
+                fill="#66717a", font=("Segoe UI", 9), width=max(100, width - 24),
+            )
+            return
+        sections = (
+            ("Attack · best STAB", type_attacks(info.types)),
+            ("Defense · incoming", type_defenses(info.types)),
+        )
+        section_height = height / 2
+        columns = 9
+        x_margin = 5
+        cell_width = max(16, (width - x_margin * 2) / columns)
+        title_height = min(20, max(14, section_height * .28))
+        grid_height = max(20, section_height - title_height - 2)
+        cell_height = grid_height / 2
+        type_height = max(7, cell_height * .46)
+        type_font = 6 if cell_width < 27 else 7
+        value_font = 6 if cell_width < 27 or cell_height < 20 else 8
+        for section_index, (title, values) in enumerate(sections):
+            section_y = section_index * section_height
+            canvas.create_text(
+                x_margin, section_y + title_height / 2, anchor="w", text=title,
+                font=("Segoe UI", 7 if section_height < 75 else 8, "bold"), fill="#30363b",
+            )
+            if section_index == 0:
+                canvas.create_text(
+                    width - x_margin, section_y + title_height / 2, anchor="e", text=" / ".join(info.types),
+                    font=("Segoe UI", 7), fill="#66717a",
+                )
+            for index, type_name in enumerate(TYPE_ORDER):
+                row, column = divmod(index, columns)
+                x0 = x_margin + column * cell_width
+                y0 = section_y + title_height + row * cell_height
+                x1 = x_margin + (column + 1) * cell_width - 1
+                y1 = y0 + cell_height - 1
+                split = min(y1 - 10, y0 + type_height)
+                canvas.create_rectangle(x0, y0, x1, split, fill=TYPE_COLORS[type_name], outline="#ffffff")
+                canvas.create_text(
+                    (x0 + x1) / 2, (y0 + split) / 2, text=type_name[:3].upper(),
+                    font=("Segoe UI", type_font, "bold"), fill=_type_text_color(type_name),
+                )
+                multiplier = float(values[type_name])
+                background, foreground = self._multiplier_style(multiplier)
+                canvas.create_rectangle(x0, split, x1, y1, fill=background, outline="#e1e5e8")
+                canvas.create_text(
+                    (x0 + x1) / 2, (split + y1) / 2,
+                    text=self._multiplier_text(multiplier) + "×",
+                    font=("Segoe UI", value_font, "bold"), fill=foreground,
+                )
 
     def _update_calculated_stats(self) -> None:
         if not hasattr(self, "final_stat_vars"):
@@ -620,6 +1349,7 @@ class PokemonEditor(ttk.Frame):
                 self.base_stat_vars[stat].set("—")
                 self.final_stat_vars[stat].set("—")
             self.stat_formula_var.set("Choose a mapped Species to calculate final stats.")
+            self._queue_stats_visual_redraw()
             return
         for stat in stat_names:
             self.base_stat_vars[stat].set(str(info.base_stats[stat]))
@@ -635,6 +1365,7 @@ class PokemonEditor(ttk.Frame):
             for stat in stat_names:
                 self.final_stat_vars[stat].set("—")
             self.stat_formula_var.set(str(exc))
+            self._queue_stats_visual_redraw()
             return
         for stat in stat_names:
             self.final_stat_vars[stat].set(str(calculated[stat]))
@@ -642,6 +1373,7 @@ class PokemonEditor(ttk.Frame):
             f"Final stats at Lv. {level} with {nature_label(nature)}. "
             "Gamma stores Level/Nature/IV/EV; only Max HP is persisted as a final stat."
         )
+        self._queue_stats_visual_redraw()
         if self.sync_calculated_hp.get():
             calculated_hp = calculated["HP"]
             old_current_hp = _number(self.vars["CurrentHP"].get(), calculated_hp)
@@ -653,20 +1385,27 @@ class PokemonEditor(ttk.Frame):
     def load(self, pokemon: PokemonView | None) -> None:
         self.current = pokemon
         if pokemon is None:
+            self._loading_move_fields = True
             self.sync_calculated_hp.set(False)
             self.heading_var.set(f"{self.title_text}: select a slot")
             for var in self.vars.values():
                 var.set(False if isinstance(var, tk.BooleanVar) else "")
-            for var in (*self.move_vars, *self.current_pp_vars, *self.max_pp_vars):
+            for var in (*self.move_vars, *self.current_pp_vars):
                 var.set("")
+            for var in self.pp_up_vars:
+                var.set("0")
+            self._pp_up_levels = [0, 0, 0, 0]
+            self._loading_move_fields = False
             self.apply_button.configure(state="disabled")
             self._update_calculated_stats()
             self._draw_preview(None)
             return
         if not pokemon.occupied:
+            self._loading_move_fields = True
             self.sync_calculated_hp.set(True)
             document = self.app.current_document()
             if document is None:
+                self._loading_move_fields = False
                 self.apply_button.configure(state="disabled")
                 return
             location = (
@@ -688,8 +1427,12 @@ class PokemonEditor(ttk.Frame):
                     var.set(str(value))
             for var in self.move_vars:
                 var.set("")
-            for var in (*self.current_pp_vars, *self.max_pp_vars):
+            for var in self.current_pp_vars:
+                var.set("")
+            for var in self.pp_up_vars:
                 var.set("0")
+            self._pp_up_levels = [0, 0, 0, 0]
+            self._loading_move_fields = False
             self.apply_button.configure(text="Create Pokemon", state="normal")
             self._refresh_species_dependent(choose_default=False)
             self._update_ev_total()
@@ -697,6 +1440,7 @@ class PokemonEditor(ttk.Frame):
             self._draw_preview(None)
             return
         fields = pokemon.fields
+        self._loading_move_fields = True
         self.sync_calculated_hp.set(False)
         self.heading_var.set(f"{self.title_text}: Slot {pokemon.slot_index + 1} — {pokemon.species}")
         for field, var in self.vars.items():
@@ -716,9 +1460,15 @@ class PokemonEditor(ttk.Frame):
         current_pp = fields.get("CurrentPP", ())
         max_pp = fields.get("MaxPP", ())
         for index in range(4):
-            self.move_vars[index].set(display_name(str(move_names[index])) if index < len(move_names) else "")
+            move_name = display_name(str(move_names[index])) if index < len(move_names) else ""
+            self.move_vars[index].set(move_name)
             self.current_pp_vars[index].set(str(current_pp[index]) if index < len(current_pp) else "0")
-            self.max_pp_vars[index].set(str(max_pp[index]) if index < len(max_pp) else "0")
+            inferred = pp_ups_from_max_pp(move_name, max_pp[index]) if move_name and index < len(max_pp) else 0
+            self.pp_up_vars[index].set(str(inferred if inferred is not None else 0))
+            self._pp_up_levels[index] = inferred if inferred is not None else 0
+        self._loading_move_fields = False
+        for index in range(4):
+            self._on_move_value_changed(index)
         self.apply_button.configure(text="Apply staged changes", state="normal")
         self._refresh_species_dependent(choose_default=False)
         self._update_ev_total()
@@ -728,36 +1478,83 @@ class PokemonEditor(ttk.Frame):
     def _draw_preview(self, pokemon: PokemonView | None) -> None:
         canvas = self.preview
         canvas.delete("all")
-        width = max(canvas.winfo_width(), 230)
-        if pokemon is None:
-            canvas.create_rectangle(12, 12, width - 12, 285, fill="#f1f4f6", outline="#aab2b9")
-            canvas.create_text(width / 2, 145, text="(Empty slot)", fill="#66717a", font=("Segoe UI", 11))
+        width = max(canvas.winfo_width(), 120)
+        height = max(canvas.winfo_height(), 330)
+        margin = 8 if width < 180 else 12
+        selected_name = str(self.vars["SpeciesData"].get()).strip()
+        selected_species = SPECIES_BY_NAME.get(selected_name.casefold())
+        if selected_species is None and pokemon is not None and pokemon.occupied:
+            selected_species = SPECIES_BY_NAME.get(pokemon.species.casefold())
+        if selected_species is None:
+            canvas.create_rectangle(margin, 12, width - margin, height - 12, fill="#f1f4f6", outline="#aab2b9")
+            canvas.create_text(
+                width / 2, height / 2, text="(Empty slot)", fill="#66717a",
+                font=("Segoe UI", 11), width=max(80, width - 24),
+            )
             return
-        fields = pokemon.fields
-        category = next((item.category for item in SPECIES if item.name == pokemon.species), "Normal")
-        colors = {
-            "Water": "#bfe2ff", "Fire": "#ffd0bd", "Grass": "#cbeec5", "Electric": "#fff0a8",
-            "Psychic": "#f4c7e5", "Dark": "#c9c1ba", "Steel": "#d7dde5", "Dragon": "#d5cbff",
-            "Bug": "#e2edb0", "Poison": "#dfc3ee", "Rock": "#dfd0ad", "Fighting": "#efc0b8",
-        }
-        bg = colors.get(category, "#e5ecef")
-        canvas.create_rectangle(12, 12, width - 12, 285, fill=bg, outline="#77838d", width=2)
-        initials = "".join(word[0] for word in pokemon.species.split()[:2]).upper()
-        canvas.create_oval(width / 2 - 48, 36, width / 2 + 48, 132, fill="#ffffff", outline="#77838d", width=2)
-        canvas.create_text(width / 2, 84, text=initials or "?", font=("Segoe UI", 24, "bold"), fill="#39434b")
+        fields = dict(pokemon.fields) if pokemon is not None else {}
+        for field, var in self.vars.items():
+            value = var.get()
+            if value != "":
+                fields[field] = value
+        types = self._types_for_species(selected_species.name) or (selected_species.category,)
+        canvas.create_rectangle(
+            margin, 12, width - margin, height - 12,
+            fill=_light_type_color(types[0]), outline="",
+        )
+        if len(types) > 1:
+            canvas.create_rectangle(
+                width / 2, 12, width - margin, height - 12,
+                fill=_light_type_color(types[1]), outline="",
+            )
+        canvas.create_rectangle(
+            margin, 12, width - margin, height - 12,
+            fill="", outline="#77838d", width=2,
+        )
+        sprite = self.app.sprites.get(selected_species.name, 96 if width < 180 else 128)
+        if sprite is not None:
+            canvas.create_image(width / 2, 88, image=sprite)
+        else:
+            initials = "".join(word[0] for word in selected_species.name.split()[:2]).upper()
+            canvas.create_oval(width / 2 - 54, 30, width / 2 + 54, 138, fill="#ffffff", outline="#77838d", width=2)
+            canvas.create_text(width / 2, 84, text=initials or "?", font=("Segoe UI", 24, "bold"), fill="#39434b")
         shiny = " ★" if fields.get("bIsShiny") else ""
-        canvas.create_text(width / 2, 155, text=pokemon.species + shiny, font=("Segoe UI", 13, "bold"))
-        canvas.create_text(width / 2, 179, text=f"Lv. {_number(fields.get('Level'), 1)}  •  {category}")
+        text_width = max(86, width - 24)
+        canvas.create_text(
+            width / 2, 160, text=selected_species.name + shiny,
+            font=("Segoe UI", 12 if width < 180 else 13, "bold"), width=text_width,
+        )
+        canvas.create_text(
+            width / 2, 184, text=f"Lv. {_number(fields.get('Level'), 1)}", width=text_width,
+        )
+        badge_gap = 4
+        badge_width = min(72, (width - margin * 2 - badge_gap * (len(types) - 1)) / len(types))
+        badge_total = badge_width * len(types) + badge_gap * (len(types) - 1)
+        badge_left = (width - badge_total) / 2
+        for index, type_name in enumerate(types):
+            x0 = badge_left + index * (badge_width + badge_gap)
+            x1 = x0 + badge_width
+            canvas.create_rectangle(x0, 198, x1, 218, fill=TYPE_COLORS[type_name], outline="#ffffff")
+            canvas.create_text(
+                (x0 + x1) / 2, 208, text=type_name.upper(),
+                font=("Segoe UI", 7 if width < 180 else 8, "bold"),
+                fill=_type_text_color(type_name),
+            )
         hp = max(0, _number(fields.get("CurrentHP")))
         max_hp = max(1, _number(fields.get("MaxHP"), 1))
         ratio = min(1.0, hp / max_hp)
-        canvas.create_rectangle(30, 202, width - 30, 220, fill="#5b646b", outline="")
+        hp_margin = 16 if width < 180 else 30
+        canvas.create_rectangle(hp_margin, 230, width - hp_margin, 248, fill="#5b646b", outline="")
         hp_color = "#43a047" if ratio > 0.5 else "#f9a825" if ratio > 0.2 else "#d32f2f"
-        canvas.create_rectangle(32, 204, 32 + (width - 64) * ratio, 218, fill=hp_color, outline="")
-        canvas.create_text(width / 2, 235, text=f"HP {hp} / {max_hp}")
+        canvas.create_rectangle(
+            hp_margin + 2, 232,
+            hp_margin + 2 + (width - 2 * hp_margin - 4) * ratio, 246,
+            fill=hp_color, outline="",
+        )
+        canvas.create_text(width / 2, 265, text=f"HP {hp} / {max_hp}")
         item = str(fields.get("HeldItem", "None"))
         status = _enum_leaf(fields.get("StatusCondition", "None"))
-        canvas.create_text(width / 2, 261, text=f"Item: {item}  •  Status: {status}", width=width - 30)
+        canvas.create_text(width / 2, 295, text=f"Item: {item}  •  Status: {status}", width=text_width)
 
     def apply(self) -> None:
         pokemon = self.current
@@ -788,7 +1585,7 @@ class PokemonEditor(ttk.Frame):
                             raise ValueError("Choose an Ability valid for the selected Species.")
                         raw = f"EPokemonAbility::{choice.enum_name if choice else raw}"
                     elif field == "HeldItem":
-                        raw = exact_choice(list(HOLDABLE_ITEM_NAMES), raw)
+                        raw = exact_choice(list(self.app._held_item_names()), raw)
                         if raw is None:
                             raise ValueError("Choose a valid holdable item.")
                     elif field in {"Gender", "StatusCondition", "MetType"}:
@@ -822,7 +1619,7 @@ class PokemonEditor(ttk.Frame):
                             raise ValueError("Choose an Ability valid for the selected Species.")
                         raw = f"EPokemonAbility::{choice.enum_name if choice else raw}"
                     elif field == "HeldItem":
-                        raw = exact_choice(list(HOLDABLE_ITEM_NAMES), raw)
+                        raw = exact_choice(list(self.app._held_item_names()), raw)
                         if raw is None:
                             raise ValueError("Choose a valid holdable item.")
                     elif field in {"Gender", "StatusCondition", "MetType"}:
@@ -843,8 +1640,9 @@ class PokemonEditor(ttk.Frame):
             species_change = species if species.name != pokemon.species else None
             if pokemon.occupied and species_change and not messagebox.askyesno(
                 APP_TITLE,
-                "Change Species DataAsset?\n\nReview the calculated Stats tab, Ability, Max HP sync option and moves "
-                "before saving.",
+                "Change Species DataAsset and apply the loaded Species profile?\n\n"
+                "The form has reset level/EXP, HP, Nature, gender, Ability, IV/EV, moves/PP, status and met data. "
+                "The existing unique identity and Trainer ownership are preserved.",
             ):
                 return
 
@@ -859,11 +1657,32 @@ class PokemonEditor(ttk.Frame):
                 if move is None:
                     raise ValueError(f"Move {name!r} is not in the verified GE-1.0.0 catalog.")
                 moves.append(move)
-                current_pp.append(int(self.current_pp_vars[index].get()))
-                max_pp.append(int(self.max_pp_vars[index].get()))
+                pp_ups = int(self.pp_up_vars[index].get())
+                maximum = max_pp_for_move(move.name, pp_ups)
+                current = int(self.current_pp_vars[index].get())
+                if not 0 <= current <= maximum:
+                    raise ValueError(f"{move.name} PP must be between 0 and {maximum}.")
+                current_pp.append(current)
+                max_pp.append(maximum)
+            move_names = tuple(move.name for move in moves)
+            if len({name.casefold() for name in move_names}) != len(move_names):
+                raise ValueError("A Pokémon cannot have the same move in more than one slot.")
+            edited_level = int(self.vars["Level"].get())
+            learnset = learnset_for_species(species.name)
+            legal_names = {
+                move.name.casefold()
+                for move in (learnset.choices(level=edited_level) if learnset is not None else ())
+            }
+            invalid_moves = [move.name for move in moves if move.name.casefold() not in legal_names]
             if pokemon.occupied:
                 old_names = tuple(display_name(str(value)) for value in pokemon.fields.get("MoveNames", ()))
-                moves_changed = tuple(move.name for move in moves) != old_names
+                moves_changed = move_names != old_names
+                level_changed = edited_level != _number(pokemon.fields.get("Level"), edited_level)
+                if invalid_moves and (moves_changed or species_change is not None or level_changed):
+                    raise ValueError(
+                        f"{', '.join(invalid_moves)} is not legal for {species.name} at Lv. {edited_level} "
+                        "from its exact GE-1.0.0 Level-up, TM, HM or Egg learnset."
+                    )
                 pp_changed = tuple(current_pp) != tuple(pokemon.fields.get("CurrentPP", ())) or tuple(max_pp) != tuple(
                     pokemon.fields.get("MaxPP", ())
                 )
@@ -876,13 +1695,18 @@ class PokemonEditor(ttk.Frame):
                     max_pp=max_pp if moves_changed or pp_changed else None,
                 )
             else:
+                if invalid_moves:
+                    raise ValueError(
+                        f"{', '.join(invalid_moves)} is not legal for {species.name} at Lv. {edited_level} "
+                        "from its exact GE-1.0.0 Level-up, TM, HM or Egg learnset."
+                    )
                 self.app.stage_new_pokemon(
                     pokemon,
                     changes,
                     species=species,
-                    moves=moves if moves else None,
-                    current_pp=current_pp if moves else None,
-                    max_pp=max_pp if moves else None,
+                    moves=moves,
+                    current_pp=current_pp,
+                    max_pp=max_pp,
                 )
         except (ValueError, GammaEditorError) as exc:
             messagebox.showerror(APP_TITLE, str(exc))
@@ -891,6 +1715,7 @@ class PokemonEditor(ttk.Frame):
 class SaveEditorApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
+        self.smoke_test = "--smoke-test" in sys.argv
         self.title(APP_TITLE)
         self.geometry("1360x840")
         self.minsize(1080, 680)
@@ -905,6 +1730,12 @@ class SaveEditorApp(tk.Tk):
         self.bag_views: list[BagEntry] = []
         self.selected_pokemon_location: tuple[str, int | None, int] = ("party", None, 0)
         self.drag_source: tuple[str, int | None, int] | None = None
+        self.clone_preset: PokemonClonePreset | None = None
+        self.clone_preset_var = tk.StringVar(value="Clone preset: none")
+        self.mod_toolchain = discover_toolchain()
+        self.custom_item_spec = installed_item(self.mod_toolchain)
+        self.sprites = SpriteRepository(self)
+        self.empty_slot_sprite = tk.PhotoImage(master=self, width=32, height=32)
         self._build_style()
         self._build_toolbar()
         self._build_tabs()
@@ -946,15 +1777,449 @@ class SaveEditorApp(tk.Tk):
         self.pokemon_tab = ttk.Frame(self.tabs, padding=8)
         self.bag_tab = ttk.Frame(self.tabs, padding=10)
         self.dex_tab = ttk.Frame(self.tabs, padding=10)
+        self.mod_builder_tab = ttk.Frame(self.tabs, padding=12)
         for frame, label in (
             (self.trainer_tab, "Trainer"), (self.pokemon_tab, "Pokémon"),
             (self.bag_tab, "Bag"), (self.dex_tab, "Pokédex"),
         ):
             self.tabs.add(frame, text=label)
+        self.tabs.add(self.mod_builder_tab, text="Item Mod Builder")
         self._build_trainer()
         self._build_pokemon()
         self._build_bag()
         self._build_dex()
+        self._build_mod_builder()
+
+    def _build_mod_builder(self) -> None:
+        tab = self.mod_builder_tab
+        tab.columnconfigure(0, weight=1)
+        tab.rowconfigure(2, weight=1)
+        ttk.Label(tab, text="Template-based Item Mod Builder", style="AppTitle.TLabel").grid(
+            row=0, column=0, sticky="w"
+        )
+        ttk.Label(
+            tab,
+            text=(
+                "GE-1.0.0 only. Clone a shipped behavior/visual template for healing, status, revive, PP, "
+                "vitamin, candy, evolution/utility, held item, Berry, TM or Poké Ball. Close the game first."
+            ),
+            style="Muted.TLabel",
+            wraplength=1040,
+        ).grid(row=1, column=0, sticky="w", pady=(3, 12))
+
+        body = ttk.Panedwindow(tab, orient="horizontal")
+        body.grid(row=2, column=0, sticky="nsew")
+        form = ttk.LabelFrame(body, text="Item wizard", padding=12)
+        environment = ttk.LabelFrame(body, text="Local mod toolchain", padding=12)
+        body.add(form, weight=3)
+        body.add(environment, weight=2)
+        form.columnconfigure(1, weight=1)
+
+        self.mod_archetype_var = tk.StringVar(value="HP Restore")
+        self.mod_template_var = tk.StringVar(value="Potion")
+        self.mod_internal_name_var = tk.StringVar(value="CustomItem")
+        self.mod_display_name_var = tk.StringVar(value="Custom Item")
+        self.mod_description_var = tk.StringVar(value="A custom item built from a verified Gamma template.")
+        self.mod_item_id_var = tk.StringVar()
+        self.mod_item_id_info_var = tk.StringVar()
+        self.mod_buy_price_var = tk.StringVar(value="500")
+        self.mod_sell_price_var = tk.StringVar(value="250")
+        self.mod_hp_restore_var = tk.StringVar(value="50")
+        self.mod_hp_percent_var = tk.StringVar(value="50")
+        self.mod_berry_restore_var = tk.StringVar(value="10")
+        self.mod_berry_threshold_var = tk.StringVar(value="0")
+        self.mod_hp_turn_var = tk.StringVar(value="6.25")
+        self.mod_attack_multiplier_var = tk.StringVar(value="2.0")
+        self.mod_special_attack_multiplier_var = tk.StringVar(value="2.0")
+        self.mod_type_multiplier_var = tk.StringVar(value="1.2")
+        self.mod_ball_rate_var = tk.StringVar(value="2.0")
+        self.mod_ball_type_var = tk.StringVar(value="UltraBall")
+        self.mod_vitamin_stat_var = tk.StringVar(value="Attack")
+        self.mod_vitamin_ev_amount_var = tk.StringVar(value="10")
+        self.mod_boosted_type_var = tk.StringVar(value="Normal")
+        self.mod_move_var = tk.StringVar(value="Surf")
+
+        ttk.Label(form, text="Archetype", width=21).grid(row=0, column=0, sticky="w", pady=5)
+        self.mod_archetype_combo = ttk.Combobox(
+            form, textvariable=self.mod_archetype_var, values=ITEM_MOD_ARCHETYPES, state="readonly"
+        )
+        self.mod_archetype_combo.grid(row=0, column=1, sticky="ew", pady=5)
+        self.mod_archetype_combo.bind("<<ComboboxSelected>>", self._on_mod_archetype_changed)
+        ttk.Label(form, text="Behavior / visual template", width=21).grid(row=1, column=0, sticky="w", pady=5)
+        self.mod_template_combo = ttk.Combobox(form, textvariable=self.mod_template_var, state="readonly")
+        self.mod_template_combo.grid(row=1, column=1, sticky="ew", pady=5)
+        self.mod_template_combo.bind("<<ComboboxSelected>>", lambda _event: self._update_mod_template_fields())
+
+        fields = (
+            ("Internal asset name", self.mod_internal_name_var),
+            ("Display + Bag name", self.mod_display_name_var),
+            ("Description", self.mod_description_var),
+            ("Item ID", self.mod_item_id_var),
+            ("Buy price", self.mod_buy_price_var),
+            ("Sell price", self.mod_sell_price_var),
+        )
+        for row, (label, variable) in enumerate(fields, start=2):
+            ttk.Label(form, text=label, width=21).grid(row=row, column=0, sticky="w", pady=5)
+            if label == "Item ID":
+                item_id_row = ttk.Frame(form)
+                item_id_row.grid(row=row, column=1, sticky="ew", pady=5)
+                item_id_row.columnconfigure(0, weight=1)
+                ttk.Entry(item_id_row, textvariable=variable).grid(row=0, column=0, sticky="ew")
+                ttk.Button(
+                    item_id_row,
+                    text="Next CSTM ID",
+                    command=lambda: self._assign_next_custom_item_id(show_error=True),
+                ).grid(row=0, column=1, padx=(6, 0))
+                ttk.Label(
+                    item_id_row,
+                    textvariable=self.mod_item_id_info_var,
+                    style="Muted.TLabel",
+                ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(2, 0))
+            else:
+                ttk.Entry(form, textvariable=variable).grid(row=row, column=1, sticky="ew", pady=5)
+
+        self.mod_dynamic_frame = ttk.LabelFrame(form, text="Template fields", padding=(8, 5))
+        self.mod_dynamic_frame.grid(row=8, column=0, columnspan=2, sticky="ew", pady=(8, 2))
+        self.mod_dynamic_frame.columnconfigure(1, weight=1)
+        dynamic_specs = (
+            ("HPRestoreAmount", "HP restored", ttk.Entry, self.mod_hp_restore_var, None),
+            ("HPRestorePercentage", "HP restored (%)", ttk.Entry, self.mod_hp_percent_var, None),
+            ("BerryHPRestore", "Berry HP restored", ttk.Entry, self.mod_berry_restore_var, None),
+            ("BerryActivationThreshold", "Berry threshold", ttk.Entry, self.mod_berry_threshold_var, None),
+            ("HPRestorePerTurn", "HP restored / turn (%)", ttk.Entry, self.mod_hp_turn_var, None),
+            ("AttackMultiplier", "Attack multiplier", ttk.Entry, self.mod_attack_multiplier_var, None),
+            (
+                "SpecialAttackMultiplier", "Sp. Attack multiplier", ttk.Entry,
+                self.mod_special_attack_multiplier_var, None,
+            ),
+            ("TypeBoostMultiplier", "Type multiplier", ttk.Entry, self.mod_type_multiplier_var, None),
+            ("CatchRateModifier", "Catch-rate multiplier", ttk.Entry, self.mod_ball_rate_var, None),
+            ("VitaminStat", "Vitamin stat", ttk.Combobox, self.mod_vitamin_stat_var, VITAMIN_STATS),
+            (
+                "EVBoostAmount", "EV boost / use", ttk.Combobox,
+                self.mod_vitamin_ev_amount_var, tuple(str(value) for value in VITAMIN_EV_AMOUNTS),
+            ),
+            ("BoostedType", "Boosted type", ttk.Combobox, self.mod_boosted_type_var, POKEMON_TYPES),
+            ("PokeballType", "Ball behavior enum", ttk.Combobox, self.mod_ball_type_var, BALL_TYPES),
+            ("TeachableMove", "Teachable move", SearchableCombobox, self.mod_move_var, tuple(move.name for move in MOVES)),
+        )
+        self.mod_dynamic_rows: dict[str, tuple[ttk.Label, tk.Widget]] = {}
+        for row, (key, label, widget_type, variable, values) in enumerate(dynamic_specs):
+            label_widget = ttk.Label(self.mod_dynamic_frame, text=label, width=21)
+            label_widget.grid(row=row, column=0, sticky="w", pady=3)
+            if widget_type is SearchableCombobox:
+                widget = SearchableCombobox(self.mod_dynamic_frame, textvariable=variable)
+                widget.set_source_values(values or ())
+            elif widget_type is ttk.Combobox:
+                widget = ttk.Combobox(
+                    self.mod_dynamic_frame, textvariable=variable, values=values or (), state="readonly"
+                )
+            else:
+                widget = ttk.Entry(self.mod_dynamic_frame, textvariable=variable)
+            widget.grid(row=row, column=1, sticky="ew", pady=3)
+            self.mod_dynamic_rows[key] = (label_widget, widget)
+
+        behavior = ttk.LabelFrame(form, text="Behavior summary", padding=(8, 5))
+        behavior.grid(row=9, column=0, columnspan=2, sticky="ew", pady=(10, 8))
+        self.mod_behavior_info_var = tk.StringVar()
+        self.mod_template_info_var = tk.StringVar()
+        ttk.Label(behavior, textvariable=self.mod_behavior_info_var, wraplength=620).pack(fill="x", anchor="w")
+        ttk.Label(
+            behavior, textvariable=self.mod_template_info_var, style="Muted.TLabel", wraplength=620,
+        ).pack(fill="x", anchor="w", pady=(4, 0))
+        buttons = ttk.Frame(form)
+        buttons.grid(row=10, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        self.mod_build_button = ttk.Button(buttons, text="Build .pak...", command=self.build_item_mod_only)
+        self.mod_build_button.pack(side="left")
+        self.mod_install_button = ttk.Button(buttons, text="Build + Install...", command=self.build_and_install_item_mod)
+        self.mod_install_button.pack(side="left", padx=6)
+        self.mod_uninstall_button = ttk.Button(
+            buttons, text="Uninstall editor mod", command=self.uninstall_current_item_mod, state="disabled"
+        )
+        self.mod_uninstall_button.pack(side="left")
+
+        top = ttk.Frame(environment)
+        top.pack(fill="x")
+        ttk.Label(top, text="Required components", style="SectionTitle.TLabel").pack(side="left")
+        ttk.Button(top, text="Refresh", command=self._refresh_mod_builder_status).pack(side="right")
+        self.mod_status_frame = ttk.Frame(environment)
+        self.mod_status_frame.pack(fill="both", expand=True, pady=(8, 0))
+        self.mod_environment_var = tk.StringVar(value="Checking...")
+        ttk.Label(environment, textvariable=self.mod_environment_var, style="Muted.TLabel", wraplength=430).pack(
+            fill="x", pady=(10, 0)
+        )
+        ttk.Label(
+            environment,
+            text=(
+                "External Cobblemon PNG/OGG files are source media only: Gamma needs UE 5.6-cooked Texture/"
+                "Sprite/SoundWave assets. The supplied ZIP has no license file, so it is not bundled."
+            ),
+            style="Muted.TLabel",
+            wraplength=430,
+        ).pack(fill="x", pady=(12, 0))
+        self.mod_item_id_var.trace_add("write", self._update_custom_item_id_info)
+        self._assign_next_custom_item_id()
+        self._on_mod_archetype_changed()
+        self._refresh_mod_builder_status()
+
+    def _on_mod_archetype_changed(self, _event=None) -> None:
+        templates = templates_for_archetype(self.mod_archetype_var.get())
+        labels = tuple(template.label for template in templates)
+        self.mod_template_combo.configure(values=labels)
+        if self.mod_template_var.get() not in labels:
+            self.mod_template_var.set(labels[0] if labels else "")
+        self._update_mod_template_fields()
+
+    def _selected_mod_template(self):
+        return next(
+            (
+                template
+                for template in templates_for_archetype(self.mod_archetype_var.get())
+                if template.label == self.mod_template_var.get()
+            ),
+            None,
+        )
+
+    def _update_custom_item_id_info(self, *_args) -> None:
+        try:
+            item_id = int(self.mod_item_id_var.get())
+        except ValueError:
+            self.mod_item_id_info_var.set("ItemID is a signed 32-bit integer; letters are not accepted by Gamma.")
+            return
+        tag = custom_item_id_tag(item_id)
+        if tag:
+            self.mod_item_id_info_var.set(f"{tag} · stored by Gamma as numeric int32 {item_id}")
+        else:
+            self.mod_item_id_info_var.set("Manual numeric ID · Gamma's ItemID field cannot contain letters")
+
+    def _assign_next_custom_item_id(self, *, show_error: bool = False) -> None:
+        try:
+            if self.smoke_test:
+                item_id = CUSTOM_ITEM_ID_BASE + 1
+            else:
+                used = (self.custom_item_spec.item_id,) if self.custom_item_spec else ()
+                item_id = allocate_custom_item_id(used_ids=used)
+            self.mod_item_id_var.set(str(item_id))
+        except ModBuilderError as exc:
+            self.mod_item_id_info_var.set(str(exc))
+            if show_error:
+                messagebox.showerror(APP_TITLE, str(exc))
+
+    def _update_mod_template_fields(self) -> None:
+        template = self._selected_mod_template()
+        visible = set(template.editable_fields if template else ())
+        for key, (label, widget) in self.mod_dynamic_rows.items():
+            if key in visible:
+                label.grid()
+                widget.grid()
+            else:
+                label.grid_remove()
+                widget.grid_remove()
+        if template:
+            risk = " Experimental runtime path." if template.experimental else ""
+            self.mod_behavior_info_var.set(
+                template.behavior_note
+                or "Uses the selected shipped ItemData behavior; fields shown above are the safe editable values."
+            )
+            self.mod_template_info_var.set(
+                f"Clones {template.label}'s cooked icon, flags, effects and dependencies; only the fields shown above change."
+                f"{risk} ItemID is numeric-only; CSTM IDs are generated sequentially. One installed editor patch/item at a time."
+            )
+        else:
+            self.mod_behavior_info_var.set("")
+            self.mod_template_info_var.set("Choose a supported template.")
+
+    def _refresh_mod_builder_status(self) -> None:
+        self.mod_toolchain = discover_toolchain()
+        self.custom_item_spec = installed_item(self.mod_toolchain)
+        for child in self.mod_status_frame.winfo_children():
+            child.destroy()
+        for row, (label, value, ok) in enumerate(self.mod_toolchain.status_rows()):
+            ttk.Label(
+                self.mod_status_frame,
+                text="OK" if ok else "MISSING",
+                foreground="#147a34" if ok else "#b42318",
+            ).grid(row=row, column=0, sticky="w", padx=(0, 8), pady=2)
+            ttk.Label(self.mod_status_frame, text=label).grid(row=row, column=1, sticky="w", pady=2)
+            ttk.Label(self.mod_status_frame, text=value, style="Muted.TLabel", wraplength=300).grid(
+                row=row, column=2, sticky="w", padx=(8, 0), pady=2
+            )
+        installed = self.custom_item_spec
+        self.mod_uninstall_button.configure(state="normal" if installed else "disabled")
+        self.mod_build_button.configure(state="normal" if self.mod_toolchain.ready else "disabled")
+        self.mod_install_button.configure(state="normal" if self.mod_toolchain.ready else "disabled")
+        self.mod_environment_var.set(
+            f"Installed editor item: {installed.display_name} (ID {installed.item_id})."
+            if installed
+            else (
+                "Toolchain ready; no editor-owned patch installed."
+                if self.mod_toolchain.ready
+                else "Toolchain incomplete; see missing rows above."
+            )
+        )
+        if hasattr(self, "pokemon_editor"):
+            self.pokemon_editor.held_item_combo.set_source_values(self._held_item_names())
+
+    def _item_mod_spec_from_form(self) -> ItemModSpec:
+        try:
+            template = self._selected_mod_template()
+            if template is None:
+                raise ModBuilderError("Choose an item archetype and behavior template.")
+            visible = set(template.editable_fields)
+            overrides: dict[str, object] = {}
+            if "BerryHPRestore" in visible:
+                overrides["BerryHPRestore"] = int(self.mod_berry_restore_var.get())
+            if "EVBoostAmount" in visible:
+                overrides["EVBoostAmount"] = int(self.mod_vitamin_ev_amount_var.get())
+            for key, variable in (
+                ("HPRestorePercentage", self.mod_hp_percent_var),
+                ("BerryActivationThreshold", self.mod_berry_threshold_var),
+                ("HPRestorePerTurn", self.mod_hp_turn_var),
+                ("AttackMultiplier", self.mod_attack_multiplier_var),
+                ("SpecialAttackMultiplier", self.mod_special_attack_multiplier_var),
+                ("TypeBoostMultiplier", self.mod_type_multiplier_var),
+                ("CatchRateModifier", self.mod_ball_rate_var),
+            ):
+                if key in visible:
+                    overrides[key] = float(variable.get())
+            for key, variable in (
+                ("VitaminStat", self.mod_vitamin_stat_var),
+                ("BoostedType", self.mod_boosted_type_var),
+                ("PokeballType", self.mod_ball_type_var),
+            ):
+                if key in visible:
+                    overrides[key] = variable.get()
+            if "TeachableMove" in visible:
+                move = MOVES_BY_NAME.get(self.mod_move_var.get().strip().casefold())
+                if move is None:
+                    raise ModBuilderError("Choose a verified shipped move for the TM.")
+                overrides["TeachableMove"] = {"package": move.path, "asset": move.object_name}
+            return ItemModSpec(
+                internal_name=self.mod_internal_name_var.get().strip(),
+                display_name=self.mod_display_name_var.get(),
+                description=self.mod_description_var.get(),
+                item_id=int(self.mod_item_id_var.get()),
+                buy_price=int(self.mod_buy_price_var.get()),
+                sell_price=int(self.mod_sell_price_var.get()),
+                hp_restore_amount=int(self.mod_hp_restore_var.get()),
+                template_key=template.key,
+                property_overrides=overrides,
+            ).validated()
+        except ValueError as exc:
+            raise ModBuilderError("Item ID, prices and integer effect amounts need whole numbers; multipliers need numbers.") from exc
+
+    def _choose_mod_output(self) -> Path | None:
+        selected = filedialog.askdirectory(title="Choose folder for the built item patch")
+        return Path(selected) if selected else None
+
+    def build_item_mod_only(self) -> None:
+        output = self._choose_mod_output()
+        if output is None:
+            return
+        self.configure(cursor="wait")
+        self.update_idletasks()
+        try:
+            built = build_item_mod(self._item_mod_spec_from_form(), output, self.mod_toolchain)
+            messagebox.showinfo(
+                APP_TITLE,
+                f"Built and SHA-256 verified:\n{built.pak_path}\n\nThe game installation was not changed.",
+            )
+            self._assign_next_custom_item_id()
+        except ModBuilderError as exc:
+            messagebox.showerror(APP_TITLE, str(exc))
+        finally:
+            self.configure(cursor="")
+
+    def build_and_install_item_mod(self) -> None:
+        output = self._choose_mod_output()
+        if output is None:
+            return
+        installed = installed_item(self.mod_toolchain)
+        replacing = installed is not None
+        reference = self._loaded_custom_item_reference(installed) if installed else None
+        if reference:
+            messagebox.showerror(
+                APP_TITLE,
+                f"The currently installed item is still referenced by {reference}.\n\n"
+                "Remove it there and use Save + Backup before replacing its runtime patch.",
+            )
+            return
+        prompt = "Build and install this item patch into Pokémon Gamma Emerald?"
+        if replacing:
+            prompt += "\n\nThe currently installed editor item will be backed up and replaced."
+        if not messagebox.askyesno(APP_TITLE, prompt):
+            return
+        self.configure(cursor="wait")
+        self.update_idletasks()
+        try:
+            built = build_item_mod(self._item_mod_spec_from_form(), output, self.mod_toolchain)
+            target = install_item_mod(built, self.mod_toolchain, replace_owned=replacing)
+            self._refresh_mod_builder_status()
+            messagebox.showinfo(
+                APP_TITLE,
+                f"Installed and verified:\n{target}\n\nThe item is now available in Bag > Add Item under {built.spec.pocket}.",
+            )
+            self._assign_next_custom_item_id()
+        except ModBuilderError as exc:
+            messagebox.showerror(APP_TITLE, str(exc))
+        finally:
+            self.configure(cursor="")
+
+    def uninstall_current_item_mod(self) -> None:
+        custom = installed_item(self.mod_toolchain)
+        reference = self._loaded_custom_item_reference(custom) if custom else None
+        if reference:
+            messagebox.showerror(
+                APP_TITLE,
+                f"Remove {custom.display_name} from {reference} and use Save + Backup before uninstalling its runtime patch.",
+            )
+            return
+        if not messagebox.askyesno(
+            APP_TITLE, "Uninstall the editor-owned item patch?\n\nThe base game pak is never touched."
+        ):
+            return
+        try:
+            uninstall_item_mod(self.mod_toolchain)
+            self._refresh_mod_builder_status()
+            messagebox.showinfo(APP_TITLE, "Editor-owned item patch uninstalled.")
+        except ModBuilderError as exc:
+            messagebox.showerror(APP_TITLE, str(exc))
+
+    def _loaded_custom_item_reference(self, custom: ItemModSpec) -> str | None:
+        """Describe the first loaded-save reference that would be orphaned by patch removal."""
+        doc = self.current_document()
+        if doc is None:
+            return None
+        target = custom.display_name.casefold()
+        if any(entry.name.casefold() == target for entry in bag_entries(doc)):
+            return "the loaded Bag"
+        pokemon = list(party_pokemon(doc))
+        for box_index in range(len(box_names(doc))):
+            pokemon.extend(item for item in storage_pokemon(doc, box_index) if item.occupied)
+        for item in pokemon:
+            held = str(item.fields.get("HeldItem", "")).split("::")[-1].strip()
+            if held.casefold() == target:
+                location = "the loaded Party" if item.source == "Party" else "a loaded Storage box"
+                return f"{location} (held by {item.species})"
+        return None
+
+    def _bag_item_names(self, pocket: str) -> tuple[str, ...]:
+        names = [choice.name for choice in ITEMS_BY_POCKET[pocket]]
+        custom = getattr(self, "custom_item_spec", None)
+        if custom and custom.pocket == pocket and custom.display_name not in names:
+            names.append(custom.display_name)
+        return tuple(names)
+
+    def _custom_bag_items(self, pocket: str) -> tuple[str, ...]:
+        custom = getattr(self, "custom_item_spec", None)
+        return (custom.display_name,) if custom and custom.pocket == pocket else ()
+
+    def _held_item_names(self) -> tuple[str, ...]:
+        names = list(HOLDABLE_ITEM_NAMES)
+        custom = getattr(self, "custom_item_spec", None)
+        if custom and custom.archetype in {"Held Item", "Berry"} and custom.display_name not in names:
+            names.append(custom.display_name)
+        return tuple(names)
 
     def _build_pokemon(self) -> None:
         self.pokemon_tab.rowconfigure(0, weight=1)
@@ -964,20 +2229,25 @@ class SaveEditorApp(tk.Tk):
 
         ttk.Label(roster, text="Party", style="SectionTitle.TLabel").pack(anchor="w")
         ttk.Label(
-            roster, text="Drag a Pokémon card between Party and the current Box.", style="Muted.TLabel"
+            roster, text="Drag to move; right-click to Copy, Set, or Release.", style="Muted.TLabel"
         ).pack(anchor="w", pady=(1, 6))
+        ttk.Label(roster, textvariable=self.clone_preset_var, style="Muted.TLabel").pack(
+            anchor="w", pady=(0, 6)
+        )
         self.party_grid = ttk.Frame(roster)
         self.party_grid.pack(fill="x")
         self.party_cards: list[tk.Label] = []
         for index in range(6):
             card = tk.Label(
-                self.party_grid, width=16, height=3, relief="ridge", borderwidth=1,
+                self.party_grid, width=116, height=82, relief="ridge", borderwidth=1,
                 bg="#f2f5f7", anchor="center", justify="center", cursor="hand2",
+                image=self.empty_slot_sprite, compound="top",
             )
             card.grid(row=index // 3, column=index % 3, sticky="nsew", padx=2, pady=2)
             card.pokemon_location = ("party", None, index)  # type: ignore[attr-defined]
             card.bind("<ButtonPress-1>", lambda _event, loc=card.pokemon_location: self._on_pokemon_press(loc))
             card.bind("<ButtonRelease-1>", self._on_pokemon_release)
+            card.bind("<Button-3>", lambda event, loc=card.pokemon_location: self._open_pokemon_context(event, loc))
             self.party_cards.append(card)
 
         controls = ttk.Frame(roster)
@@ -995,8 +2265,9 @@ class SaveEditorApp(tk.Tk):
         self.storage_cards: list[tk.Label] = []
         for index in range(30):
             card = tk.Label(
-                self.storage_grid, width=10, height=3, relief="ridge", borderwidth=1,
+                self.storage_grid, width=78, height=68, relief="ridge", borderwidth=1,
                 bg="#f7f8f9", anchor="center", justify="center", cursor="hand2",
+                image=self.empty_slot_sprite, compound="top",
             )
             card.grid(row=index // 5, column=index % 5, sticky="nsew", padx=2, pady=2)
             card.bind(
@@ -1004,6 +2275,12 @@ class SaveEditorApp(tk.Tk):
                 lambda _event, slot=index: self._on_pokemon_press(("storage", self._selected_box_index(), slot)),
             )
             card.bind("<ButtonRelease-1>", self._on_pokemon_release)
+            card.bind(
+                "<Button-3>",
+                lambda event, slot=index: self._open_pokemon_context(
+                    event, ("storage", self._selected_box_index(), slot)
+                ),
+            )
             self.storage_cards.append(card)
         for column in range(5):
             self.storage_grid.columnconfigure(column, weight=1)
@@ -1088,6 +2365,7 @@ class SaveEditorApp(tk.Tk):
         header.grid(row=0, column=0, sticky="ew", pady=(0, 8))
         ttk.Label(header, text="Bag", style="AppTitle.TLabel").pack(side="left")
         ttk.Button(header, text="+ Add Item", command=self.open_add_item_dialog).pack(side="right")
+        ttk.Button(header, text="Catalog Info", command=self.show_item_catalog_info).pack(side="right", padx=6)
         body = ttk.Panedwindow(self.bag_tab, orient="horizontal")
         body.grid(row=1, column=0, sticky="nsew")
         listing = ttk.Frame(body)
@@ -1186,7 +2464,7 @@ class SaveEditorApp(tk.Tk):
             row, column = divmod(index, 6)
             label = tk.Label(
                 defenses, text=type_name[:3].upper() + "\n1×", width=6, height=2,
-                relief="solid", borderwidth=1, bg=TYPE_COLORS[type_name], fg="#111111",
+                relief="solid", borderwidth=1, bg=TYPE_COLORS[type_name], fg=_type_text_color(type_name),
                 font=("Segoe UI", 8, "bold"),
             )
             label.grid(row=row, column=column, padx=1, pady=1)
@@ -1347,6 +2625,8 @@ class SaveEditorApp(tk.Tk):
         try:
             self.loaded = load_save(path)
             self.working_gvas = self.loaded.container.payload
+            self.clone_preset = None
+            self.clone_preset_var.set("Clone preset: none")
             self.dirty = False
             self.path_var.set(str(path))
             self._refresh_all()
@@ -1446,9 +2726,11 @@ class SaveEditorApp(tk.Tk):
             self.selected_pokemon_location = selected
         for index, card in enumerate(self.party_cards):
             pokemon = party_by_slot.get(index)
-            text = f"{index + 1}\n{pokemon.species}\nLv {_number(pokemon.fields.get('Level'))}" if pokemon else f"{index + 1}\n(empty)"
+            text = f"#{index + 1}  {pokemon.species}\nLv {_number(pokemon.fields.get('Level'))}" if pokemon else f"#{index + 1}\n(empty)"
+            image = self.sprites.get(pokemon.species, 32) if pokemon else None
             card.configure(
                 text=text,
+                image=image or self.empty_slot_sprite,
                 bg="#d9edf7" if selected == ("party", None, index) else "#f2f5f7",
                 relief="solid" if selected == ("party", None, index) else "ridge",
                 borderwidth=2 if selected == ("party", None, index) else 1,
@@ -1458,9 +2740,11 @@ class SaveEditorApp(tk.Tk):
             card.pokemon_location = location  # type: ignore[attr-defined]
             pokemon = storage_by_slot.get(index)
             occupied = bool(pokemon and pokemon.occupied)
-            text = f"{index + 1}\n{pokemon.species}\nLv {_number(pokemon.fields.get('Level'))}" if occupied else f"{index + 1}\n—"
+            text = f"{index + 1}  {pokemon.species}\nLv {_number(pokemon.fields.get('Level'))}" if occupied else f"{index + 1}\n—"
+            image = self.sprites.get(pokemon.species, 32) if occupied and pokemon else None
             card.configure(
                 text=text,
+                image=image or self.empty_slot_sprite,
                 bg="#d9edf7" if selected == location else ("#eef7e9" if occupied else "#f7f8f9"),
                 relief="solid" if selected == location else "ridge",
                 borderwidth=2 if selected == location else 1,
@@ -1537,6 +2821,134 @@ class SaveEditorApp(tk.Tk):
         except (ValueError, GammaEditorError) as exc:
             messagebox.showerror(APP_TITLE, str(exc))
 
+    def _pokemon_at(self, location: tuple[str, int | None, int]) -> PokemonView | None:
+        kind, box, slot = location
+        if kind == "party":
+            return next((item for item in self.party_views if item.slot_index == slot), None)
+        doc = self.current_document()
+        if doc is None or box is None:
+            return None
+        return next((item for item in storage_pokemon(doc, box) if item.slot_index == slot), None)
+
+    def _open_pokemon_context(self, event, location: tuple[str, int | None, int]) -> None:
+        self.drag_source = None
+        self._select_pokemon_location(location)
+        pokemon = self._pokemon_at(location)
+        target = self._set_target_at(location)
+        menu = tk.Menu(self, tearoff=False)
+        occupied_state = "normal" if pokemon and pokemon.occupied else "disabled"
+        set_state = "normal" if self.clone_preset is not None and target is not None else "disabled"
+        menu.add_command(
+            label="Clone (Copy)", state=occupied_state,
+            command=lambda: self.copy_pokemon_clone_preset(location),
+        )
+        menu.add_command(
+            label="Set", state=set_state,
+            command=lambda: self.set_pokemon_clone_preset(location),
+        )
+        menu.add_separator()
+        menu.add_command(
+            label="Release (Delete)", state=occupied_state,
+            command=lambda: self.release_selected_pokemon(location),
+        )
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    def _set_target_at(self, location: tuple[str, int | None, int]) -> PokemonView | None:
+        kind, box, slot = location
+        if kind == "party":
+            target_slot = party_set_target_slot(len(self.party_views), slot)
+            if target_slot is None:
+                return None
+            return PokemonView(
+                prefix=f"Party[{target_slot}]", source="Party", box_index=None,
+                slot_index=target_slot, species="Empty", occupied=False, fields={},
+            )
+        pokemon = self._pokemon_at(location)
+        return pokemon if pokemon is not None and not pokemon.occupied else None
+
+    def copy_pokemon_clone_preset(self, location: tuple[str, int | None, int]) -> None:
+        doc = self.current_document()
+        source = self._pokemon_at(location)
+        if doc is None or source is None or not source.occupied:
+            return
+        try:
+            self.clone_preset = copy_pokemon_preset(doc, source)
+            preset_text = pokemon_showdown_preset(source)
+            clipboard_note = ""
+            try:
+                self.clipboard_clear()
+                self.clipboard_append(preset_text)
+                self.update_idletasks()
+            except tk.TclError:
+                clipboard_note = " (system clipboard unavailable)"
+            self.clone_preset_var.set(f"Clone preset: {source.species} (ready to Set)")
+            self.status_var.set(
+                f"Copied {source.species} preset{clipboard_note}; "
+                "right-click an empty Party/Storage slot and choose Set"
+            )
+        except (ValueError, GammaEditorError) as exc:
+            messagebox.showerror(APP_TITLE, str(exc))
+
+    def set_pokemon_clone_preset(self, location: tuple[str, int | None, int]) -> None:
+        doc = self.current_document()
+        preset = self.clone_preset
+        target = self._set_target_at(location)
+        if doc is None or preset is None or target is None:
+            return
+        self.configure(cursor="wait")
+        self.update_idletasks()
+        try:
+            self.working_gvas = set_pokemon_preset(doc, preset, target)
+            actual_location = (
+                ("party", None, target.slot_index) if location[0] == "party" else location
+            )
+            self.selected_pokemon_location = actual_location
+            place = (
+                f"Party {actual_location[2] + 1}"
+                if location[0] == "party"
+                else f"{self.box_var.get()} / slot {location[2] + 1}"
+            )
+            redirected = (
+                f" (redirected from clicked Party {location[2] + 1} to the nearest empty slot)"
+                if location[0] == "party" and location[2] != target.slot_index
+                else ""
+            )
+            self._mark_staged(f"Set cloned {preset.species} preset into {place}{redirected}")
+        except (ValueError, GammaEditorError) as exc:
+            messagebox.showerror(APP_TITLE, str(exc))
+        finally:
+            self.configure(cursor="")
+
+    def release_selected_pokemon(self, location: tuple[str, int | None, int]) -> None:
+        doc = self.current_document()
+        pokemon = self._pokemon_at(location)
+        if doc is None or pokemon is None or not pokemon.occupied:
+            return
+        place = (
+            f"Party {pokemon.slot_index + 1}"
+            if pokemon.source == "Party"
+            else f"{self.box_var.get()} / slot {pokemon.slot_index + 1}"
+        )
+        if not messagebox.askyesno(
+            APP_TITLE,
+            f"Release {pokemon.species} from {place}?\n\n"
+            "This deletion stays staged until Save + Backup.",
+        ):
+            return
+        try:
+            self.working_gvas = release_pokemon(doc, pokemon)
+            if pokemon.source == "Party":
+                remaining = len(party_pokemon(parse_gvas(self.working_gvas)))
+                self.selected_pokemon_location = ("party", None, min(pokemon.slot_index, remaining - 1))
+            else:
+                self.selected_pokemon_location = location
+            self._mark_staged(f"Released {pokemon.species} from {place}")
+        except (ValueError, GammaEditorError) as exc:
+            messagebox.showerror(APP_TITLE, str(exc))
+
     def _refresh_storage(self) -> None:
         doc = self.current_document()
         if doc is None:
@@ -1605,7 +3017,7 @@ class SaveEditorApp(tk.Tk):
         self.selected_bag_entry = item
         self.selected_bag_prefix = item.prefix
         self.bag_pocket_var.set(BAG_POCKET_LABELS.get(pocket, pocket))
-        self.bag_name_combo.set_source_values([choice.name for choice in ITEMS_BY_POCKET[pocket]])
+        self.bag_name_combo.set_source_values(self._bag_item_names(pocket))
         self.bag_name_var.set(item.name)
         self.bag_qty_var.set(str(item.quantity))
         self.bag_apply_button.configure(state="normal")
@@ -1638,27 +3050,47 @@ class SaveEditorApp(tk.Tk):
             pocket = label_to_pocket.get(pocket_var.get())
             item_var.set("")
             item_combo.set_source_values(
-                [choice.name for choice in ITEMS_BY_POCKET[pocket]] if pocket else (),
+                self._bag_item_names(pocket) if pocket else (),
                 enabled=bool(pocket),
             )
 
         def add() -> None:
             doc = self.current_document()
             pocket = label_to_pocket.get(pocket_var.get())
-            selected_item = ITEM_BY_NAME.get(item_var.get().strip().casefold())
-            if doc is None or pocket is None or selected_item is None or selected_item.pocket != pocket:
+            selected_name = exact_choice(list(self._bag_item_names(pocket)), item_var.get()) if pocket else None
+            if doc is None or pocket is None or selected_name is None:
                 messagebox.showerror(APP_TITLE, "Choose a pocket and an item.", parent=dialog)
                 return
             try:
-                self.working_gvas = add_bag_item(doc, pocket, selected_item.name, int(qty_var.get()))
+                self.working_gvas = add_bag_item(
+                    doc,
+                    pocket,
+                    selected_name,
+                    int(qty_var.get()),
+                    additional_items=self._custom_bag_items(pocket),
+                )
                 dialog.destroy()
-                self._mark_staged(f"Staged add/update: {selected_item.name}")
+                self._mark_staged(f"Staged add/update: {selected_name}")
             except (ValueError, GammaEditorError) as exc:
                 messagebox.showerror(APP_TITLE, str(exc), parent=dialog)
 
         pocket_combo.bind("<<ComboboxSelected>>", pocket_changed)
         ttk.Button(dialog, text="Add Item", command=add).grid(row=3, column=1, sticky="e", padx=12, pady=(10, 14))
         dialog.bind("<Return>", lambda _event: add())
+
+    def show_item_catalog_info(self) -> None:
+        counts = ", ".join(
+            f"{BAG_POCKET_LABELS[pocket]}: {len(ITEMS_BY_POCKET[pocket])}"
+            for pocket in BAG_POCKETS
+        )
+        messagebox.showinfo(
+            APP_TITLE,
+            "This list is the GE-1.0.0 asset catalog, not the full Pokémon-series item pool.\n\n"
+            f"Verified writable items (86 total): {counts}.\n\n"
+            "The executable names 8 additional Ball enums—Dive, Dusk, Heal, Master, Nest, Net, "
+            "Quick and Safari—but this build has no matching ItemData + Ball Blueprint for them. "
+            "They stay unavailable to prevent runtime-invalid saves.",
+        )
 
     def remove_selected_bag_item(self) -> None:
         doc = self.current_document()
@@ -1934,14 +3366,20 @@ class SaveEditorApp(tk.Tk):
             return
         try:
             quantity = int(self.bag_qty_var.get())
-            selected_item = ITEM_BY_NAME.get(self.bag_name_var.get().strip().casefold())
-            if selected_item is None or selected_item.pocket != item.category:
+            selected_name = exact_choice(list(self._bag_item_names(item.category)), self.bag_name_var.get())
+            if selected_name is None:
                 raise ValueError(f"Choose a valid item from the {BAG_POCKET_LABELS[item.category]} pocket.")
-            item_name = selected_item.name
+            item_name = selected_name
             if item_name == item.name and quantity == item.quantity:
                 self.status_var.set("Bag: no changes to stage")
                 return
-            self.working_gvas = edit_bag_item(doc, item, item_name, quantity)
+            self.working_gvas = edit_bag_item(
+                doc,
+                item,
+                item_name,
+                quantity,
+                additional_items=self._custom_bag_items(item.category),
+            )
             self.selected_bag_prefix = item.prefix
             self._mark_staged(f"Staged Bag edit: {item.name}")
         except (ValueError, GammaEditorError) as exc:
@@ -2074,6 +3512,113 @@ def main() -> None:
             or app.focus_get() is not combo.entry
         ):
             raise RuntimeError("Arrow-opened searchable dropdown did not accept typing")
+        combo._hide_popup()
+        combo.set("Torchic")
+        app.pokemon_editor.vars["Level"].set("8")
+        app.pokemon_editor.move_filter_var.set("Level-up (current level)")
+        app.update()
+        level_moves = app.pokemon_editor.move_combos[0]._source_values
+        if "Focus Energy" not in level_moves or "Ember" in level_moves:
+            raise RuntimeError("Torchic level-up move filter does not honor the edited level")
+        combo.set("Wingull")
+        app.pokemon_editor.move_filter_var.set("HM")
+        app.update()
+        if app.pokemon_editor.move_combos[0]._source_values != ("", "Fly"):
+            raise RuntimeError("Wingull exact HM move filter is incorrect")
+        app.pokemon_editor.move_vars[0].set("Scratch")
+        app.update()
+        if app.pokemon_editor.current_pp_vars[0].get() != "35" or "Base 35" not in app.pokemon_editor.pp_max_vars[0].get():
+            raise RuntimeError("Scratch Base PP was not loaded into the move editor")
+        app.pokemon_editor.pp_up_vars[0].set("3")
+        app.update()
+        if app.pokemon_editor.current_pp_vars[0].get() != "56" or "/ 56 max" not in app.pokemon_editor.pp_max_vars[0].get():
+            raise RuntimeError("PP Up scaling did not update Scratch PP to 56")
+        combo.set("Torchic")
+        app.pokemon_editor._load_species_defaults_into_form()
+        app.update()
+        if (
+            app.pokemon_editor.vars["Level"].get() != "5"
+            or app.pokemon_editor.vars["Ability"].get() != "Blaze"
+            or tuple(var.get() for var in app.pokemon_editor.move_vars[:2]) != ("Growl", "Scratch")
+            or app.pokemon_editor.vars["MaxHP"].get() != "19"
+            or app.pokemon_editor.vars["MetType"].get() != "Gift"
+        ):
+            raise RuntimeError("Species selection did not load the complete base profile")
+        app.pokemon_editor.evolution_canvas.configure(width=500, height=220)
+        app.pokemon_editor._draw_evolution_chart()
+        if len(app.pokemon_editor.evolution_canvas.find_all()) < 10:
+            raise RuntimeError("Responsive evolution chart did not render the Torchic family")
+        app.pokemon_editor.sections.select(1)
+        app.update()
+        app.pokemon_editor._max_all_evs()
+        app.update()
+        if (
+            not app.allow_ev_over_510.get()
+            or any(app.pokemon_editor.vars[stat + "_EV"].get() != "252" for stat in (
+                "HP", "Attack", "Defense", "SpecialAttack", "SpecialDefense", "Speed",
+            ))
+            or "1512" not in app.pokemon_editor.ev_total_var.get()
+        ):
+            raise RuntimeError("Max all EVs did not enable the override and set all six EVs to 252")
+        app.pokemon_editor.final_stats_canvas.configure(width=360, height=180)
+        app.pokemon_editor.type_matchup_canvas.configure(width=360, height=180)
+        app.pokemon_editor._draw_stats_visuals()
+        if len(app.pokemon_editor.final_stats_canvas.find_all()) < 20:
+            raise RuntimeError("Responsive final-stat column chart did not render")
+        if len(app.pokemon_editor.type_matchup_canvas.find_all()) < 100:
+            raise RuntimeError("Attack/defense type matchup chart did not render all 18 types")
+        app.pokemon_editor.sections.select(2)
+        for move_var, move_name in zip(
+            app.pokemon_editor.move_vars,
+            ("Tackle", "Rock Slide", "Surf", "Ice Beam"),
+        ):
+            move_var.set(move_name)
+        app.update()
+        app.pokemon_editor._draw_move_attack_charts()
+        expected_types = ("Normal", "Rock", "Water", "Ice")
+        for index, expected_type in enumerate(expected_types):
+            if expected_type not in str(app.pokemon_editor.move_attack_frames[index].cget("text")):
+                raise RuntimeError(f"Move {index + 1} chart did not load its attack type")
+            if len(app.pokemon_editor.move_attack_canvases[index].find_all()) < 60:
+                raise RuntimeError(f"Move {index + 1} attack type chart did not render all 18 types")
+        app.pokemon_editor.sections.select(0)
+        app.pokemon_editor.vars["SpeciesData"].set("Lucario")
+        app.update()
+        if tuple(label.cget("text") for label in app.pokemon_editor.main_type_labels) != ("FIGHTING", "STEEL"):
+            raise RuntimeError("Main tab did not render Lucario's exact dual types")
+        if app.pokemon_editor.main_type_labels[0].cget("fg") != "#ffffff":
+            raise RuntimeError("Dark Fighting badge did not choose readable contrasting text")
+        if app.sprites.available_directory is not None and app.sprites.get("Torchic", 128) is None:
+            raise RuntimeError("Local Pokemon sprite cache is present but Torchic did not load")
+        app.tabs.select(app.mod_builder_tab)
+        app._refresh_mod_builder_status()
+        app.update()
+        if len(app.mod_toolchain.status_rows()) != 7:
+            raise RuntimeError("Item Mod Builder environment checklist is incomplete")
+        if app.mod_toolchain.ready and str(app.mod_build_button.cget("state")) == "disabled":
+            raise RuntimeError("Item Mod Builder stayed disabled with a complete local toolchain")
+        if app._item_mod_spec_from_form().helper_payload()["object_name"] != "DA_CustomItem":
+            raise RuntimeError("Item Mod Builder default wizard values are invalid")
+        if "CSTM-000001" not in app.mod_item_id_info_var.get():
+            raise RuntimeError("Item Mod Builder did not expose the numeric CSTM Item ID tag")
+        app.mod_archetype_var.set("Vitamin")
+        app._on_mod_archetype_changed()
+        app.update()
+        vitamin_fields = app._selected_mod_template().editable_fields
+        if "EVBoostAmount" not in vitamin_fields or app.mod_vitamin_ev_amount_var.get() != "10":
+            raise RuntimeError("Vitamin EV amount dropdown did not load its verified default")
+        if "100 EV" not in app.mod_behavior_info_var.get() or "510 total" not in app.mod_behavior_info_var.get():
+            raise RuntimeError("Vitamin behavior summary omitted the native EV caps")
+        app.mod_archetype_var.set("Held Item")
+        app._on_mod_archetype_changed()
+        app.update()
+        if "battle money" not in app.mod_behavior_info_var.get():
+            raise RuntimeError("Held Item behavior summary did not follow the selected template")
+        app.mod_archetype_var.set("TM")
+        app._on_mod_archetype_changed()
+        app.update()
+        if "does not create or edit a move" not in app.mod_behavior_info_var.get():
+            raise RuntimeError("TM behavior summary did not explain the existing-move boundary")
         app.destroy()
         return
     app.mainloop()

@@ -582,6 +582,11 @@ def _apply_semantic_safety(document: GvasDocument) -> None:
 def _encode_fstring(value: str) -> bytes:
     if "\0" in value:
         raise GvasError("Unreal strings cannot contain NUL characters.")
+    if value == "":
+        # UE's canonical empty FString is a zero length with no terminator.
+        # Encoding it as length 1 plus NUL parses as the same Python value but
+        # breaks runtime resolution when used as an FSoftObjectPath sub-path.
+        return struct.pack("<i", 0)
     try:
         raw = value.encode("ascii") + b"\0"
         return struct.pack("<i", len(raw)) + raw
