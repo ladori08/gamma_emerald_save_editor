@@ -14,4 +14,9 @@ release/
 samples/private/
 backups/
 .build_tcl/
+.build_temp/
+.build_windows/
 _tk_test/
+save_key.hex
+.gamma-save-key
+runtime_assets/
