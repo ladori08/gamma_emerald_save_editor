@@ -1,6 +1,6 @@
 # Item Mod Builder (experimental)
 
-Version 0.16.1 expands the local template-based mod pipeline for the installed GE-1.0.0 Windows
+Version 0.19.2 expands the local template-based mod pipeline for the installed GE-1.0.0 Windows
 build. It creates a real cooked `ItemData` asset and patch pak; writing an arbitrary Bag name alone
 cannot create an item.
 
@@ -23,8 +23,25 @@ The wizard exposes 41 selected behavior/visual templates across 11 groups:
 | Poké Ball | Nine shipped visual/Blueprint dependency sets; Ball enum/rate where serialized |
 
 Every item also has an internal asset name, display/Bag name, description, high-range Item ID, buy
-price and sell price. Fields not shown for the selected template are inherited unchanged. Choosing a
-template is therefore part of defining behavior, not merely choosing an icon.
+price and sell price. Every one of the 11 groups has separate `Visual template` and `Behavior
+template` selectors. They must come from the same category: the behavior donor keeps the safe native
+`ItemType`, flags and effect data, while the visual donor supplies its cooked icon references. For a
+Poké Ball, the visual copy also includes actor, sprite, flipbook, VFX and SFX references. A category
+with one verified donor still shows both selectors, but naturally has only one choice.
+
+### Compatible multiple effects
+
+Held Items expose six independently editable native modifiers in addition to the selected core
+behavior: Attack, Defense, Sp. Atk, Sp. Def and Speed multipliers plus end-of-turn HP recovery. For
+example, select `Leftovers` behavior, `Light Ball` visuals, then set Attack and Sp. Atk to `2` and HP
+per turn to `6.25`; the built asset retains Leftovers behavior and serializes all three modifiers.
+The `Effects` box lists every non-neutral modifier before building.
+
+This is deliberately not an unrestricted behavior stack. GE-1.0.0 stores one `ItemType` and one
+`HeldItemEffect` enum per ItemData. Vitamins likewise have one target stat, TMs one move and Balls one
+Ball behavior enum. Combining unrelated behaviors such as Revive + Ball or two core held-effect enums
+would need new Blueprint/C++ runtime logic, so the editor rejects cross-category visual/behavior pairs
+and does not claim those combinations work.
 
 ## Custom Item IDs
 
@@ -133,34 +150,69 @@ and still crash at runtime.
 
 ## Build and install workflow
 
+The builder content scrolls vertically when it is taller than the available window. Use the visible
+scrollbar, mouse wheel or trackpad while the pointer is over the builder. The title and category tab
+remain in place, and the behavior fields, Effects panel and build buttons can all be reached at the
+editor's 1080 × 680 minimum size.
+
 1. Fully close Pokémon Gamma Emerald.
 2. Open `Item Mod Builder`; confirm every environment row is `OK`.
-3. Select an archetype, then its behavior/visual template.
+3. Select a category, its cooked visual template, then its core behavior template.
 4. Keep the generated CSTM Item ID, or enter a different unique numeric ID of at least 100000.
 5. Set the display name, description, prices and the template-specific fields that appear.
-6. Use `Build .pak...` for output only, or `Build + Install...` for a guarded local install.
+6. Use `Build .pak...` for a standalone one-item output; this is the only action that asks for an
+   export folder. Use `Build + Install...` to add the item directly to the guarded installed editor
+   pack. It builds in disposable staging, then cleans that staging automatically. Existing custom
+   items are rebuilt into the installed pack and preserved.
 7. Reload/open the save in the editor, then add the custom item from its generated Bag pocket. Held
    items and Berries also become available in the Pokémon Held Item selector.
 8. Use `Save + Backup`, launch the game, and test the checklist below on a disposable slot/copy.
 
 The output includes a `.pak` and `<pak>.gamma-editor.json`. Gamma currently recognizes the tested
-patch only as `PokemonEmerald-Windows_0_P.pak`, so the editor manages one installed custom item at a
-time.
+patch only as `PokemonEmerald-Windows_0_P.pak`, so the editor manages one installed **pack**. That
+pack may contain multiple custom items; its format-2 manifest records every item needed to rebuild
+it. Existing format-1 single-item manifests are upgraded automatically on the next addition.
 
 ## Replacement and uninstall safety
 
 - Unknown patch files and editor patches whose SHA-256 changed are never overwritten or removed.
-- Replacement backs up the existing editor-owned pak and manifest first.
+- Adding an item backs up the existing editor-owned pak and manifest, then atomically replaces them
+  with a rebuilt pack containing both the old items and the new item.
 - Installation verifies a temporary sibling and atomically replaces the owned target.
 - The base `PokemonEmerald-Windows.pak` is never opened for writing.
-- Replacement/uninstall is blocked if the loaded Bag, Party, or any loaded Storage box still
-  references the installed custom item. Remove it and use `Save + Backup` first.
+- Adding another item does not require removing existing items from the loaded save because their
+  assets remain in the rebuilt pack. Uninstall is blocked if the loaded Bag, Party, or any loaded
+  Storage box still references any item in the pack; remove those references and use
+  `Save + Backup` first.
 - The editor cannot inspect every other save automatically; clean custom items out of other saves
   before removing or sharing the patch.
 
+## Editing or removing an installed custom item
+
+The `Installed custom items` selector is backed by the owned pack's format-2 manifest. Select an
+item and press `Edit selected` to restore its category, Visual, Behavior, description, prices and
+effect fields into the wizard. While editing, Item ID, internal asset name, display/Bag name and
+category are locked. Those four values form its save-facing identity and pocket placement; changing
+them could orphan an existing Bag or held-item reference.
+
+Change the unlocked fields and press `Update + Install`. The editor replaces that item at the same
+position, rebuilds every item in the cumulative pack, verifies the new pak and backs up the previous
+pak/manifest before atomic replacement. It does not ask for an output folder, and old manual exports
+in `CustomItemBuild` cannot cause a filename collision. `New Item` exits edit mode and restores the fresh-item form.
+`Build .pak...` while editing creates a standalone proof only; it does not update the installed pack.
+
+`Remove selected` scans the currently loaded Bag, Party and every loaded Storage box. A reference
+blocks removal until it is cleared and saved with `Save + Backup`. If other items remain, the editor
+rebuilds a pack containing them; removing the last item performs the normal guarded full uninstall.
+Other save files are not scanned automatically, so remove the item from those saves before deleting
+it from the pack.
+
 ## Runtime proof and remaining acceptance work
 
-Automated tests and real cooked-asset builds cover the writer and pak layout. A read-only headless
+Automated tests and real cooked-asset builds cover the writer and pak layout. A v0.18.0 non-installed
+proof pack contains one generated asset for every supported category (11 items / 22 cooked files).
+A separate parsed proof retained Leftovers as `HeldItemEffect`, copied Light Ball's icon and serialized
+all five stat multipliers plus end-of-turn healing. A read-only headless
 runtime probe confirmed that ItemDataManager discovers representative custom Vitamin, Ball and TM
 assets and reads their new IDs plus template-specific stat/Ball/rate/move fields. The probe patch and
 loader were removed afterward, and the base pak hash remained unchanged.

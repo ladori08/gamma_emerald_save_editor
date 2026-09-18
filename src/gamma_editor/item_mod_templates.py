@@ -193,6 +193,43 @@ def _type_power_effect(item_name: str, move_type: str, multiplier: str) -> str:
     return f"When held, {item_name} {verb} the power of {move_type}-type moves by {amount}."
 
 
+def _held_modifier_effects(values: Mapping[str, str]) -> list[str]:
+    effects: list[str] = []
+    for field, label in (
+        ("AttackMultiplier", "Attack"),
+        ("DefenseMultiplier", "Defense"),
+        ("SpecialAttackMultiplier", "Sp. Atk"),
+        ("SpecialDefenseMultiplier", "Sp. Def"),
+        ("SpeedMultiplier", "Speed"),
+    ):
+        try:
+            multiplier = float(values[field])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if abs(multiplier - 1.0) > 0.000_001:
+            effects.append(f"multiplies {label} by {multiplier:g}×")
+    try:
+        healing = float(values["HPRestorePerTurn"])
+    except (KeyError, TypeError, ValueError):
+        healing = 0.0
+    if healing > 0:
+        effects.append(f"restores {healing:g}% maximum HP at the end of each turn")
+    return effects
+
+
+def _append_held_modifiers(base: str, values: Mapping[str, str]) -> str:
+    effects = _held_modifier_effects(values)
+    if not effects:
+        return base
+    return f"{base} It also {_join_effects(effects)}."
+
+
+def _join_effects(effects: list[str]) -> str:
+    if len(effects) == 1:
+        return effects[0]
+    return ", ".join(effects[:-1]) + f", and {effects[-1]}"
+
+
 def player_effect_summary(
     template: ItemModTemplate,
     *,
@@ -237,26 +274,35 @@ def player_effect_summary(
         return f"When held, {name} prevents its holder from evolving."
 
     if key == "DA_AmuletCoin":
-        return f"When held by a Pokémon that joins the battle, {name} doubles the prize money received."
-    if key == "DA_LeftOvers":
-        amount = _display_number(current.get("HPRestorePerTurn", ""), "6.25")
-        return f"At the end of each turn, {name} restores {amount}% of its holder's maximum HP."
-    if key == "DA_LightOrb":
-        attack = _display_number(current.get("AttackMultiplier", ""), "2")
-        special = _display_number(current.get("SpecialAttackMultiplier", ""), "2")
-        healing = _display_number(current.get("HPRestorePerTurn", ""), "6.25")
-        return (
-            f"When held, {name} multiplies Attack by {attack}× and Sp. Atk by {special}×, "
-            f"then restores {healing}% maximum HP per turn."
+        return _append_held_modifiers(
+            f"When held by a Pokémon that joins the battle, {name} doubles the prize money received.",
+            current,
         )
+    if key == "DA_LeftOvers":
+        effects = _held_modifier_effects(current)
+        if effects:
+            return f"When held, {name} {_join_effects(effects)}."
+        return f"At the end of each turn, {name} restores 6.25% of its holder's maximum HP."
+    if key == "DA_LightOrb":
+        effects = _held_modifier_effects(current)
+        if not effects:
+            effects = [
+                "multiplies Attack by 2×",
+                "multiplies Sp. Atk by 2×",
+                "restores 6.25% maximum HP at the end of each turn",
+            ]
+        return f"When held, {name} {_join_effects(effects)}."
     if key in {"DA_MiracleSeed", "DA_SilkScarf", "DA_SoftSand"}:
-        return _type_power_effect(
-            name,
-            current.get("BoostedType", "the selected type"),
-            current.get("TypeBoostMultiplier", "1.2"),
+        return _append_held_modifiers(
+            _type_power_effect(
+                name,
+                current.get("BoostedType", "the selected type"),
+                current.get("TypeBoostMultiplier", "1.2"),
+            ),
+            current,
         )
     if key == "DA_QuickClaw":
-        return f"When held, {name} may let its holder move first."
+        return _append_held_modifiers(f"When held, {name} may let its holder move first.", current)
 
     if key == "DA_OranBerry":
         held = _display_number(current.get("BerryHPRestore", ""), "the configured amount of")

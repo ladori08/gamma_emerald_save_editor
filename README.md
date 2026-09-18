@@ -40,7 +40,7 @@ GE-1.0.0 asset counts and a safe custom-item test checklist, see
 [the item extension guide](docs/ITEM_EXTENSION_GUIDE.md).
 The deeper [Item Mod Wizard feasibility report](docs/ITEM_MOD_WIZARD_FEASIBILITY.md) compares the
 Icarus workflow and records the completed Gamma cooked-asset proofs. The experimental
-[Item Mod Builder guide](docs/ITEM_MOD_BUILDER.md) covers the v0.16.1 multi-archetype wizard,
+[Item Mod Builder guide](docs/ITEM_MOD_BUILDER.md) covers the v0.19.2 composable multi-item wizard,
 Ball/media limitations, toolchain check, guarded install/uninstall and runtime test checklist.
 
 ## CLI
@@ -60,7 +60,7 @@ gamma-save slot-filename PokemonSaveSlot
 
 ## Editor workspace
 
-Version 0.16.1 uses an Indigo-style consumer workspace instead of exposing raw schema rows:
+Version 0.19.2 uses an Indigo-style consumer workspace instead of exposing raw schema rows:
 
 - Trainer form with synchronized Trainer name/ID edits.
 - One Pokémon tab combines six Party cards with a compact 5 × 6 current-Box grid. Dragging cards
@@ -109,10 +109,25 @@ Version 0.16.1 uses an Indigo-style consumer workspace instead of exposing raw s
 - The fifth `Item Mod Builder` tab exposes 41 selected templates across HP/status/PP healing,
   Revive, Vitamins, Rare Candy, evolution/utility, held items, Berries, TMs and Poké Balls. Dynamic
   fields include healing, multipliers, boosted type/stat, any verified shipped TM move, Ball enum and
-  catch rate where the chosen cooked template serializes them. The installed custom item appears in
+  catch rate where the chosen cooked template serializes them. Every category now selects its cooked
+  `Visual template` separately from its `Behavior template`; Ball visuals include the full inherited
+  sprite/flipbook/VFX/SFX reference set, not only the Bag icon. Compatible Held Item modifiers can be
+  stacked with one core held behavior (five stat multipliers plus end-of-turn HP recovery). The game
+  schema still permits only one core `ItemType`/`HeldItemEffect`, so arbitrary cross-category behavior
+  stacks are intentionally rejected. The installed custom item appears in
   its correct Bag pocket and custom held items/Berries appear in the Held Item selector. Unknown or
   hash-modified patch files are never overwritten; loaded Bag/Party/Storage references block patch
   replacement or uninstall.
+- `Installed custom items` can load any manifest-backed item into the wizard for editing. Item ID,
+  internal asset name, display/Bag name and category are locked so existing save references remain
+  valid; Visual, Behavior, description, prices and compatible effect fields remain editable.
+  `Update + Install` backs up and rebuilds the entire pack in disposable staging, so it never asks
+  for an export folder or collides with an older manually built `.pak`. `Remove selected` uses the
+  same staging workflow for the remaining items and refuses removal while the loaded Bag, Party or
+  Storage references it.
+- The Item Mod Builder body has its own vertical scrollbar and mouse-wheel/trackpad handling. At the
+  1080 × 680 minimum window size, overflowing effect fields and action buttons remain reachable
+  without maximizing or resizing the editor.
 - Custom Item IDs are generated from a persistent numeric `CSTM` namespace and shown as sequential
   tags such as `CSTM-000001`. Gamma's underlying `ItemID` is an `int32`, so letters cannot be stored
   in the game field itself. Vitamin templates expose EV gain choices based on divisors of 252 plus

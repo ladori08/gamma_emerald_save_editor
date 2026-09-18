@@ -55,18 +55,21 @@
 | Pokédex | Types/Abilities/base stats/type defenses | Done | 116 mapped species + 18-type chart |
 | Bag | Hide asset-less Max Revive | Done | Removed from Bag/held-item choices; Bag Catalog Info documents scope |
 | Bag | Blueprint/icon-only item candidates | Partial | Classified as unregistered; runtime verification pending |
-| Bag | Template-derived custom item creation | Partial | v0.16.0 has 41 templates/11 archetypes, CSTM IDs and behavior help; per-effect user runtime acceptance pending |
+| Bag | Template-derived custom item creation | Partial | v0.18.0 has separate Visual/Behavior across 41 templates/11 archetypes plus compatible Held modifier stacking; per-effect user runtime acceptance pending |
 | Docs | Item extension and runtime-test guide | Done | `docs/ITEM_EXTENSION_GUIDE.md`; current-build evidence + future mod/update path |
 | Research | Icarus vs Gamma item-modding pipeline | Done | JSON DataTable patches vs unversioned cooked ItemData/Blueprint dependencies |
 | Mod builder | V11 patch-pak construction | Done | Correct V11/mount point/internal path round-trip proven |
 | Mod builder | Gamma external-pak container mount | Done | `PokemonEmerald-Windows_0_P.pak` held open beside base; arbitrary basename ignored; probe removed |
 | Mod builder | Cooked-asset override priority | Done | Runtime read mapped Potion override value from patch; reversible cleanup passed |
 | Mod builder | ItemData schema + new-asset discovery | Done | Build-matched usmap; 72 fields; manager auto-discovered renamed `/Game/Items/` asset |
-| Mod builder | Multi-archetype item wizard | Partial | CSTM ID + Vitamin/Ball/TM discovery proofs; gameplay effects pending |
+| Mod builder | Multi-archetype item wizard | Partial | Separate same-category Visual/Behavior + Held modifier composition; gameplay effects pending |
+| Mod builder | Edit/remove individual custom item | Done | Manifest reload, locked identity/category, full-pack rebuild/backup and loaded-reference removal guard |
+| UX | Scrollable Item Mod Builder | Done | Visible scrollbar + wheel/trackpad; 1080 × 680 overflow/action-button smoke coverage |
+| UX | Install workflow without export collision | Done | Install/update/remove rebuild in disposable staging; manual Build `.pak` remains no-overwrite |
 | UX | Player-facing dynamic item Effects | Done | All archetypes covered; Silk Scarf/Vitamin/TM value-following tests + GUI smoke |
 | Mod builder | Runtime Vitamin cap policy | Done | Native hook return override + production-form activation + owned cleanup; user gameplay acceptance pending |
 | Safety | Runtime mod ownership and conflict guards | Done | Managed hashes, unknown-loader refusal, user-mod uninstall refusal, game-running guard |
-| Build | Windows executable | Done | v0.16.1 built; 70 tests + source/packaged GUI smoke + packaged live-slot validation pass |
+| Build | Windows executable | Done | v0.19.2: 77 tests; source/packaged GUI smoke; all four local save slots validate |
 | Build | Stable root launcher refreshed by builds | Done | Launcher opened current dist GUI; PID smoke-tested |
 | Backup | Separate GitHub repository | Done | Sanitized branch + draft PR #1 published |
 | Live test | Edit, game load and in-game resave | Done | Potion 2 -> 3 survived normal game resave |

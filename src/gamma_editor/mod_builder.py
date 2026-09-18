@@ -34,6 +34,14 @@ POKEMON_TYPES = (
 VITAMIN_EV_AMOUNTS = (1, 2, 3, 4, 6, 7, 9, 10, 12, 14, 18, 21, 28, 36, 42, 63, 84, 126, 252)
 VITAMIN_STAT_CAP = 100
 VITAMIN_TOTAL_CAP = 510
+HELD_COMPOSABLE_FIELDS = (
+    "AttackMultiplier",
+    "DefenseMultiplier",
+    "SpecialAttackMultiplier",
+    "SpecialDefenseMultiplier",
+    "SpeedMultiplier",
+    "HPRestorePerTurn",
+)
 # FourCC "CSTM" interpreted as a positive big-endian int32. ItemID is numeric-only in GE-1.0.0,
 # so the UI pairs this recognizable namespace with a separate CSTM-###### display tag.
 CUSTOM_ITEM_ID_BASE = int.from_bytes(b"CSTM", "big")
@@ -111,10 +119,15 @@ class ItemModSpec:
     hp_restore_amount: int
     template_key: str = "DA_Potion"
     property_overrides: dict[str, object] = field(default_factory=dict)
+    visual_template_key: str | None = None
 
     @property
     def template(self):
         return TEMPLATE_BY_KEY.get(self.template_key)
+
+    @property
+    def visual_template(self):
+        return TEMPLATE_BY_KEY.get(self.visual_template_key or self.template_key)
 
     @property
     def archetype(self) -> str:
@@ -150,7 +163,15 @@ class ItemModSpec:
         template = self.template
         if template is None:
             raise ModBuilderError(f"Unknown or unavailable item template: {self.template_key}.")
-        unknown = set(self.property_overrides) - set(template.editable_fields)
+        visual_template = self.visual_template
+        if visual_template is None:
+            raise ModBuilderError(f"Unknown or unavailable visual template: {self.visual_template_key}.")
+        if visual_template.archetype != template.archetype:
+            raise ModBuilderError("Visual and behavior templates must belong to the selected item category.")
+        editable = set(template.editable_fields)
+        if template.archetype == "Held Item":
+            editable.update(HELD_COMPOSABLE_FIELDS)
+        unknown = set(self.property_overrides) - editable
         if unknown:
             raise ModBuilderError(f"Template {template.label} cannot safely edit: {', '.join(sorted(unknown))}.")
         overrides = dict(self.property_overrides)
@@ -161,7 +182,8 @@ class ItemModSpec:
                 raise ModBuilderError(f"{name} must be between 0 and 9999.")
             if name in {
                 "CatchRateModifier", "BerryActivationThreshold", "HPRestorePerTurn",
-                "TypeBoostMultiplier", "AttackMultiplier", "SpecialAttackMultiplier",
+                "TypeBoostMultiplier", "AttackMultiplier", "DefenseMultiplier",
+                "SpecialAttackMultiplier", "SpecialDefenseMultiplier", "SpeedMultiplier",
             } and not 0 <= float(value) <= 1000:
                 raise ModBuilderError(f"{name} must be between 0 and 1000.")
             if name == "PokeballType" and value not in BALL_TYPES:
@@ -185,6 +207,7 @@ class ItemModSpec:
             hp_restore_amount=int(self.hp_restore_amount),
             template_key=self.template_key,
             property_overrides=overrides,
+            visual_template_key=visual_template.key,
         )
 
     def helper_payload(self) -> dict[str, object]:
@@ -205,6 +228,7 @@ class ItemModSpec:
             "buy_price": valid.buy_price,
             "sell_price": valid.sell_price,
             "property_overrides": valid.property_overrides,
+            "visual_template_key": valid.visual_template.key,
         }
 
 
@@ -285,6 +309,12 @@ class BuiltItemMod:
     manifest_path: Path
     sha256: str
     spec: ItemModSpec
+    specs: tuple[ItemModSpec, ...] = ()
+
+    @property
+    def all_specs(self) -> tuple[ItemModSpec, ...]:
+        """Every item carried by the patch, including legacy single-item builds."""
+        return self.specs or (self.spec,)
 
 
 def _unique_paths(paths: Iterable[Path]) -> Iterable[Path]:
@@ -397,21 +427,92 @@ def _run_checked(command: list[str], *, cwd: Path) -> None:
         raise ModBuilderError(f"Mod tool failed ({result.returncode}): {detail[-1200:]}")
 
 
-def _manifest_data(spec: ItemModSpec, pak_path: Path, digest: str) -> dict[str, object]:
+def _validated_specs(items: Iterable[ItemModSpec]) -> tuple[ItemModSpec, ...]:
+    items = tuple(item.validated() for item in items)
+    checks = (
+        ("Item ID", [item.item_id for item in items]),
+        ("internal asset name", [item.internal_name.casefold() for item in items]),
+        ("display / Bag name", [item.display_name.casefold() for item in items]),
+    )
+    for label, values in checks:
+        if len(values) != len(set(values)):
+            raise ModBuilderError(f"The custom item pack already contains that {label}.")
+    return items
+
+
+def _validated_item_bundle(
+    spec: ItemModSpec,
+    bundled_specs: Iterable[ItemModSpec] = (),
+) -> tuple[ItemModSpec, ...]:
+    return _validated_specs((*bundled_specs, spec))
+
+
+def replace_item_in_bundle(
+    items: Iterable[ItemModSpec],
+    original_item_id: int,
+    replacement: ItemModSpec,
+) -> tuple[ItemModSpec, ...]:
+    """Replace one item while preserving save-facing identity and category."""
+    current = _validated_specs(items)
+    matches = [index for index, item in enumerate(current) if item.item_id == int(original_item_id)]
+    if len(matches) != 1:
+        raise ModBuilderError("The installed custom item selected for editing no longer exists uniquely.")
+    index = matches[0]
+    original = current[index]
+    updated = replacement.validated()
+    if (
+        updated.item_id != original.item_id
+        or updated.internal_name != original.internal_name
+        or updated.display_name != original.display_name
+    ):
+        raise ModBuilderError(
+            "Editing must preserve Item ID, internal asset name and display / Bag name to avoid orphaned save references."
+        )
+    if updated.archetype != original.archetype:
+        raise ModBuilderError("Editing must preserve the item category to avoid moving existing Bag references.")
+    result = list(current)
+    result[index] = updated
+    return _validated_specs(result)
+
+
+def remove_item_from_bundle(
+    items: Iterable[ItemModSpec],
+    item_id: int,
+) -> tuple[ItemModSpec, ...]:
+    """Remove exactly one installed custom item by its stable numeric identity."""
+    current = _validated_specs(items)
+    remaining = tuple(item for item in current if item.item_id != int(item_id))
+    if len(remaining) != len(current) - 1:
+        raise ModBuilderError("The installed custom item selected for removal no longer exists uniquely.")
+    return remaining
+
+
+def _manifest_data(specs: tuple[ItemModSpec, ...], pak_path: Path, digest: str) -> dict[str, object]:
+    primary = specs[-1]
     return {
         "product": MANIFEST_PRODUCT,
-        "format": 1,
+        "format": 2,
         "target_game_version": GAME_VERSION,
         "created_utc": datetime.now(timezone.utc).isoformat(),
         "pak_file": pak_path.name,
         "pak_sha256": digest,
-        "template": TEMPLATE_BY_KEY[spec.template_key].label,
-        "item": asdict(spec),
+        # Keep the newest item in the legacy fields so older editor builds can still
+        # identify the patch. Format 2 readers use the complete items collection.
+        "template": TEMPLATE_BY_KEY[primary.template_key].label,
+        "item": asdict(primary),
+        "items": [asdict(item) for item in specs],
     }
 
 
-def build_item_mod(spec: ItemModSpec, output_directory: Path | str, toolchain: ModToolchain | None = None) -> BuiltItemMod:
-    valid = spec.validated()
+def build_item_mod(
+    spec: ItemModSpec,
+    output_directory: Path | str,
+    toolchain: ModToolchain | None = None,
+    *,
+    bundled_specs: Iterable[ItemModSpec] = (),
+) -> BuiltItemMod:
+    specs = _validated_item_bundle(spec, bundled_specs)
+    valid = specs[-1]
     tools = toolchain or discover_toolchain()
     if is_game_running():
         raise ModBuilderError("Close Pokémon Gamma Emerald before building a mod.")
@@ -433,15 +534,30 @@ def build_item_mod(spec: ItemModSpec, output_directory: Path | str, toolchain: M
         temp = Path(temp_name)
         item_directory = temp / "stage" / "PokemonEmerald" / "Content" / "Items"
         item_directory.mkdir(parents=True)
-        asset_path = item_directory / f"DA_{valid.internal_name}.uasset"
-        spec_path = temp / "item-spec.json"
-        spec_path.write_text(json.dumps(valid.helper_payload(), ensure_ascii=False, indent=2), encoding="utf-8")
-        _run_checked(
-            [str(tools.dotnet), str(tools.helper_dll), "build-item", str(template_path), str(asset_path), str(tools.usmap), str(spec_path)],
-            cwd=tools.helper_dll.parent,
-        )
-        if not asset_path.is_file() or not asset_path.with_suffix(".uexp").is_file():
-            raise ModBuilderError("Asset helper did not produce the expected .uasset + .uexp pair.")
+        for index, item in enumerate(specs):
+            source = tools.template_path(item.template_key)
+            if source is None or not source.is_file() or not source.with_suffix(".uexp").is_file():
+                raise ModBuilderError(f"Selected template files are missing: {item.template_key}.")
+            asset_path = item_directory / f"DA_{item.internal_name}.uasset"
+            spec_path = temp / f"item-spec-{index}.json"
+            payload = item.helper_payload()
+            visual_source = tools.template_path(item.visual_template.key)
+            if visual_source is None or not visual_source.is_file() or not visual_source.with_suffix(".uexp").is_file():
+                raise ModBuilderError(f"Selected visual template files are missing: {item.visual_template.key}.")
+            if item.visual_template.key != item.template_key:
+                payload["visual_source_path"] = str(visual_source)
+            spec_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            _run_checked(
+                [
+                    str(tools.dotnet), str(tools.helper_dll), "build-item", str(source),
+                    str(asset_path), str(tools.usmap), str(spec_path),
+                ],
+                cwd=tools.helper_dll.parent,
+            )
+            if not asset_path.is_file() or not asset_path.with_suffix(".uexp").is_file():
+                raise ModBuilderError(
+                    f"Asset helper did not produce the expected files for {item.display_name}."
+                )
         _run_checked(
             [str(tools.repak), "pack", "--version", "V11", "--mount-point", "../../../", str(temp / "stage"), str(pak_path)],
             cwd=tools.repak.parent,
@@ -450,9 +566,9 @@ def build_item_mod(spec: ItemModSpec, output_directory: Path | str, toolchain: M
         raise ModBuilderError("Pak writer did not produce a non-empty patch.")
     digest = sha256_file(pak_path)
     manifest_path.write_text(
-        json.dumps(_manifest_data(valid, pak_path, digest), ensure_ascii=False, indent=2), encoding="utf-8"
+        json.dumps(_manifest_data(specs, pak_path, digest), ensure_ascii=False, indent=2), encoding="utf-8"
     )
-    return BuiltItemMod(pak_path, manifest_path, digest, valid)
+    return BuiltItemMod(pak_path, manifest_path, digest, valid, specs)
 
 
 def _read_owned_manifest(pak_path: Path, manifest_path: Path) -> dict[str, object]:
@@ -470,16 +586,25 @@ def _read_owned_manifest(pak_path: Path, manifest_path: Path) -> dict[str, objec
     return data
 
 
-def installed_item(toolchain: ModToolchain | None = None) -> ItemModSpec | None:
+def installed_items(toolchain: ModToolchain | None = None) -> tuple[ItemModSpec, ...]:
     tools = toolchain or discover_toolchain()
     pak, manifest = tools.installed_pak, tools.installed_manifest
     if not pak or not manifest or not pak.exists() or not manifest.exists():
-        return None
+        return ()
     try:
         data = _read_owned_manifest(pak, manifest)
-        return ItemModSpec(**data["item"]).validated()  # type: ignore[arg-type]
+        raw_items = data.get("items")
+        if not isinstance(raw_items, list):
+            raw_items = [data["item"]]
+        return tuple(ItemModSpec(**raw).validated() for raw in raw_items)  # type: ignore[arg-type]
     except (KeyError, TypeError, ModBuilderError):
-        return None
+        return ()
+
+
+def installed_item(toolchain: ModToolchain | None = None) -> ItemModSpec | None:
+    """Return the newest installed item for compatibility with single-item callers."""
+    items = installed_items(toolchain)
+    return items[-1] if items else None
 
 
 def install_item_mod(built: BuiltItemMod, toolchain: ModToolchain | None = None, *, replace_owned: bool = False) -> Path:
@@ -497,8 +622,10 @@ def install_item_mod(built: BuiltItemMod, toolchain: ModToolchain | None = None,
         backup_dir = target.parent / "GammaEditorBackups"
         backup_dir.mkdir(exist_ok=True)
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
-        shutil.copy2(target, backup_dir / f"{target.name}.{stamp}.bak")
-        shutil.copy2(target_manifest, backup_dir / f"{target_manifest.name}.{stamp}.bak")
+        # Compact names keep backup writes below legacy Windows MAX_PATH even when
+        # Gamma itself lives under an already deep directory.
+        shutil.copy2(target, backup_dir / f"item-pack.{stamp}.pak.bak")
+        shutil.copy2(target_manifest, backup_dir / f"item-pack.{stamp}.manifest.json.bak")
     data = json.loads(built.manifest_path.read_text(encoding="utf-8"))
     data["pak_file"] = target.name
     data["pak_sha256"] = sha256_file(built.pak_path)
@@ -515,6 +642,32 @@ def install_item_mod(built: BuiltItemMod, toolchain: ModToolchain | None = None,
         temp_pak.unlink(missing_ok=True)
         temp_manifest.unlink(missing_ok=True)
     return target
+
+
+def build_and_install_item_bundle(
+    items: Iterable[ItemModSpec],
+    toolchain: ModToolchain | None = None,
+    *,
+    replace_owned: bool = False,
+) -> Path:
+    """Build a complete bundle in disposable staging and atomically install it.
+
+    Installed workflows intentionally do not reuse user export folders. This keeps a
+    previous ``Build .pak`` artifact from blocking an update merely because both
+    bundles would have the same generated filename.
+    """
+    specs = _validated_specs(items)
+    if not specs:
+        raise ModBuilderError("The custom item bundle is empty.")
+    tools = toolchain or discover_toolchain()
+    with tempfile.TemporaryDirectory(prefix="gamma-editor-item-install-") as temp_name:
+        built = build_item_mod(
+            specs[-1],
+            Path(temp_name),
+            tools,
+            bundled_specs=specs[:-1],
+        )
+        return install_item_mod(built, tools, replace_owned=replace_owned)
 
 
 def uninstall_item_mod(toolchain: ModToolchain | None = None) -> None:

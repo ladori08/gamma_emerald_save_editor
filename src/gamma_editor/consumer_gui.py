@@ -72,17 +72,20 @@ from .item_mod_templates import (
 from .mod_builder import (
     BALL_TYPES,
     CUSTOM_ITEM_ID_BASE,
+    HELD_COMPOSABLE_FIELDS,
     ItemModSpec,
     ModBuilderError,
     POKEMON_TYPES,
     VITAMIN_EV_AMOUNTS,
     VITAMIN_STATS,
     allocate_custom_item_id,
+    build_and_install_item_bundle,
     build_item_mod,
     custom_item_id_tag,
     discover_toolchain,
-    install_item_mod,
-    installed_item,
+    installed_items,
+    remove_item_from_bundle,
+    replace_item_in_bundle,
     uninstall_item_mod,
 )
 from .save_service import (
@@ -1745,7 +1748,8 @@ class SaveEditorApp(tk.Tk):
         self.clone_preset: PokemonClonePreset | None = None
         self.clone_preset_var = tk.StringVar(value="Clone preset: none")
         self.mod_toolchain = discover_toolchain()
-        self.custom_item_spec = installed_item(self.mod_toolchain)
+        self.custom_item_specs = installed_items(self.mod_toolchain)
+        self.mod_editing_item_id: int | None = None
         self.sprites = SpriteRepository(self)
         self.empty_slot_sprite = tk.PhotoImage(master=self, width=32, height=32)
         self._build_style()
@@ -1756,7 +1760,7 @@ class SaveEditorApp(tk.Tk):
         self.bind_all("<Control-s>", lambda _event: self.save())
         self.bind_all("<Control-o>", lambda _event: self.open_dialog())
         self.bind_all("<Control-r>", lambda _event: self.reload())
-        self.after(100, self._open_default)
+        self._initial_open_job = self.after(100, self._open_default)
 
     def _build_style(self) -> None:
         style = ttk.Style(self)
@@ -1806,21 +1810,49 @@ class SaveEditorApp(tk.Tk):
         tab = self.mod_builder_tab
         tab.columnconfigure(0, weight=1)
         tab.rowconfigure(2, weight=1)
-        ttk.Label(tab, text="Template-based Item Mod Builder", style="AppTitle.TLabel").grid(
+        ttk.Label(tab, text="Composable Item Mod Builder", style="AppTitle.TLabel").grid(
             row=0, column=0, sticky="w"
         )
         ttk.Label(
             tab,
             text=(
-                "GE-1.0.0 only. Clone a shipped behavior/visual template for healing, status, revive, PP, "
-                "vitamin, candy, evolution/utility, held item, Berry, TM or Poké Ball. Close the game first."
+                "GE-1.0.0 only. Mix same-category shipped visuals and behavior for healing, status, revive, "
+                "PP, vitamin, candy, evolution/utility, held item, Berry, TM or Poké Ball. Close the game first."
             ),
             style="Muted.TLabel",
             wraplength=1040,
         ).grid(row=1, column=0, sticky="w", pady=(3, 12))
 
-        body = ttk.Panedwindow(tab, orient="horizontal")
-        body.grid(row=2, column=0, sticky="nsew")
+        scroll_host = ttk.Frame(tab)
+        scroll_host.grid(row=2, column=0, sticky="nsew")
+        scroll_host.columnconfigure(0, weight=1)
+        scroll_host.rowconfigure(0, weight=1)
+        canvas_background = ttk.Style().lookup("TFrame", "background") or self.cget("background")
+        self.mod_scroll_canvas = tk.Canvas(
+            scroll_host,
+            highlightthickness=0,
+            borderwidth=0,
+            background=canvas_background,
+            yscrollincrement=24,
+        )
+        self.mod_scrollbar = ttk.Scrollbar(
+            scroll_host, orient="vertical", command=self.mod_scroll_canvas.yview
+        )
+        self.mod_scroll_canvas.configure(yscrollcommand=self.mod_scrollbar.set)
+        self.mod_scroll_canvas.grid(row=0, column=0, sticky="nsew")
+        self.mod_scrollbar.grid(row=0, column=1, sticky="ns", padx=(6, 0))
+        self.mod_scroll_content = ttk.Frame(self.mod_scroll_canvas)
+        self.mod_scroll_window = self.mod_scroll_canvas.create_window(
+            (0, 0), window=self.mod_scroll_content, anchor="nw"
+        )
+        self.mod_scroll_content.bind("<Configure>", self._update_mod_scroll_region)
+        self.mod_scroll_canvas.bind("<Configure>", self._resize_mod_scroll_content)
+        self.bind_all("<MouseWheel>", self._on_mod_builder_mousewheel, add="+")
+        self.bind_all("<Button-4>", self._on_mod_builder_mousewheel, add="+")
+        self.bind_all("<Button-5>", self._on_mod_builder_mousewheel, add="+")
+
+        body = ttk.Panedwindow(self.mod_scroll_content, orient="horizontal")
+        body.pack(fill="both", expand=True)
         form = ttk.LabelFrame(body, text="Item wizard", padding=12)
         environment = ttk.LabelFrame(body, text="Local mod toolchain", padding=12)
         body.add(form, weight=3)
@@ -1828,6 +1860,7 @@ class SaveEditorApp(tk.Tk):
         form.columnconfigure(1, weight=1)
 
         self.mod_archetype_var = tk.StringVar(value="HP Restore")
+        self.mod_visual_var = tk.StringVar(value="Potion")
         self.mod_template_var = tk.StringVar(value="Potion")
         self.mod_internal_name_var = tk.StringVar(value="CustomItem")
         self.mod_display_name_var = tk.StringVar(value="Custom Item")
@@ -1842,7 +1875,10 @@ class SaveEditorApp(tk.Tk):
         self.mod_berry_threshold_var = tk.StringVar(value="0")
         self.mod_hp_turn_var = tk.StringVar(value="6.25")
         self.mod_attack_multiplier_var = tk.StringVar(value="2.0")
+        self.mod_defense_multiplier_var = tk.StringVar(value="1.0")
         self.mod_special_attack_multiplier_var = tk.StringVar(value="2.0")
+        self.mod_special_defense_multiplier_var = tk.StringVar(value="1.0")
+        self.mod_speed_multiplier_var = tk.StringVar(value="1.0")
         self.mod_type_multiplier_var = tk.StringVar(value="1.2")
         self.mod_ball_rate_var = tk.StringVar(value="2.0")
         self.mod_ball_type_var = tk.StringVar(value="UltraBall")
@@ -1851,16 +1887,20 @@ class SaveEditorApp(tk.Tk):
         self.mod_boosted_type_var = tk.StringVar(value="Normal")
         self.mod_move_var = tk.StringVar(value="Surf")
 
-        ttk.Label(form, text="Archetype", width=21).grid(row=0, column=0, sticky="w", pady=5)
+        ttk.Label(form, text="Category", width=21).grid(row=0, column=0, sticky="w", pady=5)
         self.mod_archetype_combo = ttk.Combobox(
             form, textvariable=self.mod_archetype_var, values=ITEM_MOD_ARCHETYPES, state="readonly"
         )
         self.mod_archetype_combo.grid(row=0, column=1, sticky="ew", pady=5)
         self.mod_archetype_combo.bind("<<ComboboxSelected>>", self._on_mod_archetype_changed)
-        ttk.Label(form, text="Behavior / visual template", width=21).grid(row=1, column=0, sticky="w", pady=5)
+        ttk.Label(form, text="Visual template", width=21).grid(row=1, column=0, sticky="w", pady=5)
+        self.mod_visual_combo = ttk.Combobox(form, textvariable=self.mod_visual_var, state="readonly")
+        self.mod_visual_combo.grid(row=1, column=1, sticky="ew", pady=5)
+        self.mod_visual_combo.bind("<<ComboboxSelected>>", lambda _event: self._update_mod_template_fields())
+        ttk.Label(form, text="Behavior template", width=21).grid(row=2, column=0, sticky="w", pady=5)
         self.mod_template_combo = ttk.Combobox(form, textvariable=self.mod_template_var, state="readonly")
-        self.mod_template_combo.grid(row=1, column=1, sticky="ew", pady=5)
-        self.mod_template_combo.bind("<<ComboboxSelected>>", lambda _event: self._update_mod_template_fields())
+        self.mod_template_combo.grid(row=2, column=1, sticky="ew", pady=5)
+        self.mod_template_combo.bind("<<ComboboxSelected>>", self._on_mod_behavior_changed)
 
         fields = (
             ("Internal asset name", self.mod_internal_name_var),
@@ -1870,28 +1910,35 @@ class SaveEditorApp(tk.Tk):
             ("Buy price", self.mod_buy_price_var),
             ("Sell price", self.mod_sell_price_var),
         )
-        for row, (label, variable) in enumerate(fields, start=2):
+        self.mod_identity_entries: dict[str, ttk.Entry] = {}
+        for row, (label, variable) in enumerate(fields, start=3):
             ttk.Label(form, text=label, width=21).grid(row=row, column=0, sticky="w", pady=5)
             if label == "Item ID":
                 item_id_row = ttk.Frame(form)
                 item_id_row.grid(row=row, column=1, sticky="ew", pady=5)
                 item_id_row.columnconfigure(0, weight=1)
-                ttk.Entry(item_id_row, textvariable=variable).grid(row=0, column=0, sticky="ew")
-                ttk.Button(
+                item_id_entry = ttk.Entry(item_id_row, textvariable=variable)
+                item_id_entry.grid(row=0, column=0, sticky="ew")
+                self.mod_identity_entries[label] = item_id_entry
+                self.mod_next_id_button = ttk.Button(
                     item_id_row,
                     text="Next CSTM ID",
                     command=lambda: self._assign_next_custom_item_id(show_error=True),
-                ).grid(row=0, column=1, padx=(6, 0))
+                )
+                self.mod_next_id_button.grid(row=0, column=1, padx=(6, 0))
                 ttk.Label(
                     item_id_row,
                     textvariable=self.mod_item_id_info_var,
                     style="Muted.TLabel",
                 ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(2, 0))
             else:
-                ttk.Entry(form, textvariable=variable).grid(row=row, column=1, sticky="ew", pady=5)
+                entry = ttk.Entry(form, textvariable=variable)
+                entry.grid(row=row, column=1, sticky="ew", pady=5)
+                if label in {"Internal asset name", "Display + Bag name"}:
+                    self.mod_identity_entries[label] = entry
 
-        self.mod_dynamic_frame = ttk.LabelFrame(form, text="Template fields", padding=(8, 5))
-        self.mod_dynamic_frame.grid(row=8, column=0, columnspan=2, sticky="ew", pady=(8, 2))
+        self.mod_dynamic_frame = ttk.LabelFrame(form, text="Behavior fields", padding=(8, 5))
+        self.mod_dynamic_frame.grid(row=9, column=0, columnspan=2, sticky="ew", pady=(8, 2))
         self.mod_dynamic_frame.columnconfigure(1, weight=1)
         dynamic_specs = (
             ("HPRestoreAmount", "HP restored", ttk.Entry, self.mod_hp_restore_var, None),
@@ -1900,10 +1947,16 @@ class SaveEditorApp(tk.Tk):
             ("BerryActivationThreshold", "Berry threshold", ttk.Entry, self.mod_berry_threshold_var, None),
             ("HPRestorePerTurn", "HP restored / turn (%)", ttk.Entry, self.mod_hp_turn_var, None),
             ("AttackMultiplier", "Attack multiplier", ttk.Entry, self.mod_attack_multiplier_var, None),
+            ("DefenseMultiplier", "Defense multiplier", ttk.Entry, self.mod_defense_multiplier_var, None),
             (
                 "SpecialAttackMultiplier", "Sp. Attack multiplier", ttk.Entry,
                 self.mod_special_attack_multiplier_var, None,
             ),
+            (
+                "SpecialDefenseMultiplier", "Sp. Defense multiplier", ttk.Entry,
+                self.mod_special_defense_multiplier_var, None,
+            ),
+            ("SpeedMultiplier", "Speed multiplier", ttk.Entry, self.mod_speed_multiplier_var, None),
             ("TypeBoostMultiplier", "Type multiplier", ttk.Entry, self.mod_type_multiplier_var, None),
             ("CatchRateModifier", "Catch-rate multiplier", ttk.Entry, self.mod_ball_rate_var, None),
             ("VitaminStat", "Vitamin stat", ttk.Combobox, self.mod_vitamin_stat_var, VITAMIN_STATS),
@@ -1932,7 +1985,7 @@ class SaveEditorApp(tk.Tk):
             self.mod_dynamic_rows[key] = (label_widget, widget)
 
         behavior = ttk.LabelFrame(form, text="Effects", padding=(8, 5))
-        behavior.grid(row=9, column=0, columnspan=2, sticky="ew", pady=(10, 8))
+        behavior.grid(row=10, column=0, columnspan=2, sticky="ew", pady=(10, 8))
         self.mod_behavior_info_var = tk.StringVar()
         self.mod_template_info_var = tk.StringVar()
         ttk.Label(behavior, textvariable=self.mod_behavior_info_var, wraplength=620).pack(fill="x", anchor="w")
@@ -1940,15 +1993,36 @@ class SaveEditorApp(tk.Tk):
             behavior, textvariable=self.mod_template_info_var, style="Muted.TLabel", wraplength=620,
         ).pack(fill="x", anchor="w", pady=(4, 0))
         buttons = ttk.Frame(form)
-        buttons.grid(row=10, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        buttons.grid(row=11, column=0, columnspan=2, sticky="ew", pady=(6, 0))
         self.mod_build_button = ttk.Button(buttons, text="Build .pak...", command=self.build_item_mod_only)
         self.mod_build_button.pack(side="left")
         self.mod_install_button = ttk.Button(buttons, text="Build + Install...", command=self.build_and_install_item_mod)
         self.mod_install_button.pack(side="left", padx=6)
+        self.mod_new_button = ttk.Button(
+            buttons, text="New Item", command=self._start_new_custom_item, state="disabled"
+        )
+        self.mod_new_button.pack(side="left")
         self.mod_uninstall_button = ttk.Button(
             buttons, text="Uninstall editor mod", command=self.uninstall_current_item_mod, state="disabled"
         )
-        self.mod_uninstall_button.pack(side="left")
+        self.mod_uninstall_button.pack(side="left", padx=(6, 0))
+
+        installed_frame = ttk.LabelFrame(environment, text="Installed custom items", padding=(8, 6))
+        installed_frame.pack(fill="x", pady=(0, 10))
+        installed_frame.columnconfigure(0, weight=1)
+        self.mod_installed_item_var = tk.StringVar()
+        self.mod_installed_combo = ttk.Combobox(
+            installed_frame, textvariable=self.mod_installed_item_var, state="readonly"
+        )
+        self.mod_installed_combo.grid(row=0, column=0, columnspan=3, sticky="ew")
+        self.mod_edit_button = ttk.Button(
+            installed_frame, text="Edit selected", command=self.load_selected_custom_item, state="disabled"
+        )
+        self.mod_edit_button.grid(row=1, column=0, sticky="w", pady=(6, 0))
+        self.mod_remove_button = ttk.Button(
+            installed_frame, text="Remove selected", command=self.remove_selected_custom_item, state="disabled"
+        )
+        self.mod_remove_button.grid(row=1, column=1, sticky="w", padx=(6, 0), pady=(6, 0))
 
         top = ttk.Frame(environment)
         top.pack(fill="x")
@@ -2025,7 +2099,10 @@ class SaveEditorApp(tk.Tk):
             self.mod_berry_threshold_var,
             self.mod_hp_turn_var,
             self.mod_attack_multiplier_var,
+            self.mod_defense_multiplier_var,
             self.mod_special_attack_multiplier_var,
+            self.mod_special_defense_multiplier_var,
+            self.mod_speed_multiplier_var,
             self.mod_type_multiplier_var,
             self.mod_ball_rate_var,
             self.mod_ball_type_var,
@@ -2039,12 +2116,81 @@ class SaveEditorApp(tk.Tk):
         self._on_mod_archetype_changed()
         self._refresh_mod_builder_status()
 
+    def _update_mod_scroll_region(self, _event=None) -> None:
+        bounds = self.mod_scroll_canvas.bbox("all")
+        if bounds:
+            self.mod_scroll_canvas.configure(scrollregion=bounds)
+
+    def _resize_mod_scroll_content(self, event) -> None:
+        self.mod_scroll_canvas.itemconfigure(self.mod_scroll_window, width=max(1, event.width))
+        self._update_mod_scroll_region()
+
+    def _pointer_is_over_mod_builder(self) -> bool:
+        if self.tabs.select() != str(self.mod_builder_tab):
+            return False
+        canvas = self.mod_scroll_canvas
+        try:
+            pointer_x, pointer_y = self.winfo_pointerx(), self.winfo_pointery()
+            left, top = canvas.winfo_rootx(), canvas.winfo_rooty()
+            return left <= pointer_x < left + canvas.winfo_width() and top <= pointer_y < top + canvas.winfo_height()
+        except tk.TclError:
+            return False
+
+    def _on_mod_builder_mousewheel(self, event):
+        if not self._pointer_is_over_mod_builder():
+            return None
+        if getattr(event, "num", None) == 4:
+            units = -1
+        elif getattr(event, "num", None) == 5:
+            units = 1
+        else:
+            delta = int(getattr(event, "delta", 0))
+            if delta == 0:
+                return None
+            units = -max(1, abs(delta) // 120) if delta > 0 else max(1, abs(delta) // 120)
+        self.mod_scroll_canvas.yview_scroll(units, "units")
+        return "break"
+
     def _on_mod_archetype_changed(self, _event=None) -> None:
         templates = templates_for_archetype(self.mod_archetype_var.get())
         labels = tuple(template.label for template in templates)
+        self.mod_visual_combo.configure(values=labels)
         self.mod_template_combo.configure(values=labels)
+        if self.mod_visual_var.get() not in labels:
+            self.mod_visual_var.set(labels[0] if labels else "")
         if self.mod_template_var.get() not in labels:
             self.mod_template_var.set(labels[0] if labels else "")
+        self._on_mod_behavior_changed()
+
+    def _on_mod_behavior_changed(self, _event=None) -> None:
+        template = self._selected_mod_template()
+        if template and template.archetype == "Held Item":
+            defaults = {
+                "AttackMultiplier": "1.0",
+                "DefenseMultiplier": "1.0",
+                "SpecialAttackMultiplier": "1.0",
+                "SpecialDefenseMultiplier": "1.0",
+                "SpeedMultiplier": "1.0",
+                "HPRestorePerTurn": "0",
+            }
+            if template.key == "DA_LightOrb":
+                defaults.update(
+                    AttackMultiplier="2.0",
+                    SpecialAttackMultiplier="2.0",
+                    HPRestorePerTurn="6.25",
+                )
+            elif template.key == "DA_LeftOvers":
+                defaults["HPRestorePerTurn"] = "6.25"
+            variables = {
+                "AttackMultiplier": self.mod_attack_multiplier_var,
+                "DefenseMultiplier": self.mod_defense_multiplier_var,
+                "SpecialAttackMultiplier": self.mod_special_attack_multiplier_var,
+                "SpecialDefenseMultiplier": self.mod_special_defense_multiplier_var,
+                "SpeedMultiplier": self.mod_speed_multiplier_var,
+                "HPRestorePerTurn": self.mod_hp_turn_var,
+            }
+            for name, value in defaults.items():
+                variables[name].set(value)
         self._update_mod_template_fields()
 
     def _selected_mod_template(self):
@@ -2056,6 +2202,114 @@ class SaveEditorApp(tk.Tk):
             ),
             None,
         )
+
+    def _selected_mod_visual_template(self):
+        return next(
+            (
+                template
+                for template in templates_for_archetype(self.mod_archetype_var.get())
+                if template.label == self.mod_visual_var.get()
+            ),
+            None,
+        )
+
+    @staticmethod
+    def _installed_item_label(item: ItemModSpec) -> str:
+        tag = custom_item_id_tag(item.item_id) or str(item.item_id)
+        return f"{item.display_name} · {tag}"
+
+    def _selected_installed_custom_item(self) -> ItemModSpec | None:
+        index = self.mod_installed_combo.current()
+        if 0 <= index < len(self.custom_item_specs):
+            return self.custom_item_specs[index]
+        return None
+
+    def _set_mod_edit_mode(self, item: ItemModSpec | None) -> None:
+        self.mod_editing_item_id = item.item_id if item else None
+        locked = item is not None
+        self.mod_archetype_combo.configure(state="disabled" if locked else "readonly")
+        for entry in self.mod_identity_entries.values():
+            entry.configure(state="disabled" if locked else "normal")
+        self.mod_next_id_button.configure(state="disabled" if locked else "normal")
+        self.mod_new_button.configure(state="normal" if locked else "disabled")
+        self.mod_install_button.configure(text="Update + Install..." if locked else "Build + Install...")
+
+    def _start_new_custom_item(self) -> None:
+        self._set_mod_edit_mode(None)
+        self.mod_archetype_var.set("HP Restore")
+        self.mod_visual_var.set("Potion")
+        self.mod_template_var.set("Potion")
+        self.mod_internal_name_var.set("CustomItem")
+        self.mod_display_name_var.set("Custom Item")
+        self.mod_description_var.set("A custom item built from a verified Gamma template.")
+        self.mod_buy_price_var.set("500")
+        self.mod_sell_price_var.set("250")
+        self.mod_hp_restore_var.set("50")
+        self._assign_next_custom_item_id()
+        self._on_mod_archetype_changed()
+        self.mod_scroll_canvas.yview_moveto(0)
+
+    def load_selected_custom_item(self) -> None:
+        item = self._selected_installed_custom_item()
+        if item is None:
+            messagebox.showerror(APP_TITLE, "Choose an installed custom item first.")
+            return
+        self._set_mod_edit_mode(None)
+        self.mod_archetype_var.set(item.archetype)
+        self._on_mod_archetype_changed()
+        self.mod_visual_var.set(item.visual_template.label)
+        self.mod_template_var.set(item.template.label)
+        self._on_mod_behavior_changed()
+
+        self.mod_internal_name_var.set(item.internal_name)
+        self.mod_display_name_var.set(item.display_name)
+        self.mod_description_var.set(item.description)
+        self.mod_item_id_var.set(str(item.item_id))
+        self.mod_buy_price_var.set(str(item.buy_price))
+        self.mod_sell_price_var.set(str(item.sell_price))
+        self.mod_hp_restore_var.set(str(item.hp_restore_amount))
+
+        defaults: tuple[tuple[str, tk.StringVar, str], ...] = (
+            ("HPRestorePercentage", self.mod_hp_percent_var, "50"),
+            ("BerryHPRestore", self.mod_berry_restore_var, "10"),
+            ("BerryActivationThreshold", self.mod_berry_threshold_var, "0"),
+            ("HPRestorePerTurn", self.mod_hp_turn_var, "0"),
+            ("AttackMultiplier", self.mod_attack_multiplier_var, "1"),
+            ("DefenseMultiplier", self.mod_defense_multiplier_var, "1"),
+            ("SpecialAttackMultiplier", self.mod_special_attack_multiplier_var, "1"),
+            ("SpecialDefenseMultiplier", self.mod_special_defense_multiplier_var, "1"),
+            ("SpeedMultiplier", self.mod_speed_multiplier_var, "1"),
+            ("TypeBoostMultiplier", self.mod_type_multiplier_var, "1.2"),
+            ("CatchRateModifier", self.mod_ball_rate_var, "2"),
+            ("VitaminStat", self.mod_vitamin_stat_var, "Attack"),
+            ("EVBoostAmount", self.mod_vitamin_ev_amount_var, "10"),
+            ("BoostedType", self.mod_boosted_type_var, "Normal"),
+            ("PokeballType", self.mod_ball_type_var, "PokeBall"),
+        )
+        for key, variable, fallback in defaults:
+            variable.set(str(item.property_overrides.get(key, fallback)))
+        teachable = item.property_overrides.get("TeachableMove")
+        if isinstance(teachable, dict):
+            move = next(
+                (
+                    candidate
+                    for candidate in MOVES
+                    if candidate.path == teachable.get("package")
+                    and candidate.object_name == teachable.get("asset")
+                ),
+                None,
+            )
+            self.mod_move_var.set(move.name if move else "Surf")
+        else:
+            self.mod_move_var.set("Surf")
+        self._set_mod_edit_mode(item)
+        self._update_mod_template_fields()
+        self.mod_scroll_canvas.yview_moveto(0)
+
+    def _editing_custom_item(self, items: tuple[ItemModSpec, ...]) -> ItemModSpec | None:
+        if self.mod_editing_item_id is None:
+            return None
+        return next((item for item in items if item.item_id == self.mod_editing_item_id), None)
 
     def _update_custom_item_id_info(self, *_args) -> None:
         try:
@@ -2074,7 +2328,7 @@ class SaveEditorApp(tk.Tk):
             if self.smoke_test:
                 item_id = CUSTOM_ITEM_ID_BASE + 1
             else:
-                used = (self.custom_item_spec.item_id,) if self.custom_item_spec else ()
+                used = tuple(item.item_id for item in self.custom_item_specs)
                 item_id = allocate_custom_item_id(used_ids=used)
             self.mod_item_id_var.set(str(item_id))
         except ModBuilderError as exc:
@@ -2085,6 +2339,8 @@ class SaveEditorApp(tk.Tk):
     def _update_mod_template_fields(self) -> None:
         template = self._selected_mod_template()
         visible = set(template.editable_fields if template else ())
+        if template and template.archetype == "Held Item":
+            visible.update(HELD_COMPOSABLE_FIELDS)
         for key, (label, widget) in self.mod_dynamic_rows.items():
             if key in visible:
                 label.grid()
@@ -2093,11 +2349,13 @@ class SaveEditorApp(tk.Tk):
                 label.grid_remove()
                 widget.grid_remove()
         if template:
+            visual = self._selected_mod_visual_template()
             risk = " Experimental runtime path." if template.experimental else ""
             self._update_mod_effect_summary()
             self.mod_template_info_var.set(
-                f"Clones {template.label}'s cooked icon, flags, effects and dependencies; only the fields shown above change."
-                f"{risk} ItemID is numeric-only; CSTM IDs are generated sequentially. One installed editor patch/item at a time."
+                f"Uses {visual.label if visual else template.label}'s cooked visual assets and "
+                f"{template.label}'s behavior/flags; only the fields shown above change."
+                f"{risk} ItemID is numeric-only; CSTM IDs are generated sequentially. Build + Install adds it to the installed editor pack."
             )
         else:
             self.mod_behavior_info_var.set("")
@@ -2117,7 +2375,10 @@ class SaveEditorApp(tk.Tk):
             "BerryActivationThreshold": self.mod_berry_threshold_var.get(),
             "HPRestorePerTurn": self.mod_hp_turn_var.get(),
             "AttackMultiplier": self.mod_attack_multiplier_var.get(),
+            "DefenseMultiplier": self.mod_defense_multiplier_var.get(),
             "SpecialAttackMultiplier": self.mod_special_attack_multiplier_var.get(),
+            "SpecialDefenseMultiplier": self.mod_special_defense_multiplier_var.get(),
+            "SpeedMultiplier": self.mod_speed_multiplier_var.get(),
             "TypeBoostMultiplier": self.mod_type_multiplier_var.get(),
             "CatchRateModifier": self.mod_ball_rate_var.get(),
             "VitaminStat": self.mod_vitamin_stat_var.get(),
@@ -2132,7 +2393,7 @@ class SaveEditorApp(tk.Tk):
 
     def _refresh_mod_builder_status(self) -> None:
         self.mod_toolchain = discover_toolchain()
-        self.custom_item_spec = installed_item(self.mod_toolchain)
+        self.custom_item_specs = installed_items(self.mod_toolchain)
         self.vitamin_runtime_environment = discover_vitamin_runtime_environment(self.mod_toolchain)
         self.vitamin_runtime_config = installed_vitamin_runtime_config(self.vitamin_runtime_environment)
         for child in self.mod_status_frame.winfo_children():
@@ -2147,12 +2408,34 @@ class SaveEditorApp(tk.Tk):
             ttk.Label(self.mod_status_frame, text=value, style="Muted.TLabel", wraplength=300).grid(
                 row=row, column=2, sticky="w", padx=(8, 0), pady=2
             )
-        installed = self.custom_item_spec
+        installed = self.custom_item_specs
+        installed_labels = tuple(self._installed_item_label(item) for item in installed)
+        self.mod_installed_combo.configure(values=installed_labels)
+        selected_index = next(
+            (
+                index
+                for index, item in enumerate(installed)
+                if item.item_id == self.mod_editing_item_id
+            ),
+            0 if installed else -1,
+        )
+        if selected_index >= 0:
+            self.mod_installed_combo.current(selected_index)
+        else:
+            self.mod_installed_item_var.set("")
+        installed_state = "normal" if installed else "disabled"
+        self.mod_edit_button.configure(state=installed_state)
+        self.mod_remove_button.configure(state=installed_state)
+        if self.mod_editing_item_id is not None and not self._editing_custom_item(installed):
+            self._set_mod_edit_mode(None)
         self.mod_uninstall_button.configure(state="normal" if installed else "disabled")
         self.mod_build_button.configure(state="normal" if self.mod_toolchain.ready else "disabled")
         self.mod_install_button.configure(state="normal" if self.mod_toolchain.ready else "disabled")
         self.mod_environment_var.set(
-            f"Installed editor item: {installed.display_name} (ID {installed.item_id})."
+            "Installed editor items ({}): {}.".format(
+                len(installed),
+                ", ".join(f"{item.display_name} (ID {item.item_id})" for item in installed),
+            )
             if installed
             else (
                 "Toolchain ready; no editor-owned patch installed."
@@ -2251,6 +2534,8 @@ class SaveEditorApp(tk.Tk):
             if template is None:
                 raise ModBuilderError("Choose an item archetype and behavior template.")
             visible = set(template.editable_fields)
+            if template.archetype == "Held Item":
+                visible.update(HELD_COMPOSABLE_FIELDS)
             overrides: dict[str, object] = {}
             if "BerryHPRestore" in visible:
                 overrides["BerryHPRestore"] = int(self.mod_berry_restore_var.get())
@@ -2261,7 +2546,10 @@ class SaveEditorApp(tk.Tk):
                 ("BerryActivationThreshold", self.mod_berry_threshold_var),
                 ("HPRestorePerTurn", self.mod_hp_turn_var),
                 ("AttackMultiplier", self.mod_attack_multiplier_var),
+                ("DefenseMultiplier", self.mod_defense_multiplier_var),
                 ("SpecialAttackMultiplier", self.mod_special_attack_multiplier_var),
+                ("SpecialDefenseMultiplier", self.mod_special_defense_multiplier_var),
+                ("SpeedMultiplier", self.mod_speed_multiplier_var),
                 ("TypeBoostMultiplier", self.mod_type_multiplier_var),
                 ("CatchRateModifier", self.mod_ball_rate_var),
             ):
@@ -2289,6 +2577,7 @@ class SaveEditorApp(tk.Tk):
                 hp_restore_amount=int(self.mod_hp_restore_var.get()),
                 template_key=template.key,
                 property_overrides=overrides,
+                visual_template_key=(self._selected_mod_visual_template() or template).key,
             ).validated()
         except ValueError as exc:
             raise ModBuilderError("Item ID, prices and integer effect amounts need whole numbers; multipliers need numbers.") from exc
@@ -2309,58 +2598,139 @@ class SaveEditorApp(tk.Tk):
                 APP_TITLE,
                 f"Built and SHA-256 verified:\n{built.pak_path}\n\nThe game installation was not changed.",
             )
-            self._assign_next_custom_item_id()
+            if self.mod_editing_item_id is None:
+                self._assign_next_custom_item_id()
         except ModBuilderError as exc:
             messagebox.showerror(APP_TITLE, str(exc))
         finally:
             self.configure(cursor="")
 
     def build_and_install_item_mod(self) -> None:
-        output = self._choose_mod_output()
-        if output is None:
+        installed = installed_items(self.mod_toolchain)
+        editing = self._editing_custom_item(installed)
+        if self.mod_editing_item_id is not None and editing is None:
+            messagebox.showerror(APP_TITLE, "The installed item being edited changed or was removed. Refresh and select it again.")
             return
-        installed = installed_item(self.mod_toolchain)
-        replacing = installed is not None
-        reference = self._loaded_custom_item_reference(installed) if installed else None
-        if reference:
-            messagebox.showerror(
-                APP_TITLE,
-                f"The currently installed item is still referenced by {reference}.\n\n"
-                "Remove it there and use Save + Backup before replacing its runtime patch.",
+        try:
+            new_spec = self._item_mod_spec_from_form()
+            if editing:
+                pack_specs = replace_item_in_bundle(installed, editing.item_id, new_spec)
+            else:
+                pack_specs = (*installed, new_spec)
+        except ModBuilderError as exc:
+            messagebox.showerror(APP_TITLE, str(exc))
+            return
+        prompt = (
+            f"Update {editing.display_name} and rebuild the installed editor pack?"
+            if editing
+            else "Build and install this item patch into Pokémon Gamma Emerald?"
+        )
+        if installed and not editing:
+            prompt += (
+                f"\n\nIt will be added to the existing editor pack ({len(installed)} item(s)); "
+                "the installed pack will be backed up and rebuilt with every item preserved."
             )
-            return
-        prompt = "Build and install this item patch into Pokémon Gamma Emerald?"
-        if replacing:
-            prompt += "\n\nThe currently installed editor item will be backed up and replaced."
+        elif editing:
+            prompt += (
+                "\n\nItem ID, internal asset name, display / Bag name and category stay unchanged. "
+                "The current installed pack will be backed up before replacement."
+            )
         if not messagebox.askyesno(APP_TITLE, prompt):
             return
         self.configure(cursor="wait")
         self.update_idletasks()
         try:
-            built = build_item_mod(self._item_mod_spec_from_form(), output, self.mod_toolchain)
-            target = install_item_mod(built, self.mod_toolchain, replace_owned=replacing)
+            target = build_and_install_item_bundle(
+                pack_specs,
+                self.mod_toolchain,
+                replace_owned=bool(installed),
+            )
             self._refresh_mod_builder_status()
             messagebox.showinfo(
                 APP_TITLE,
-                f"Installed and verified:\n{target}\n\nThe item is now available in Bag > Add Item under {built.spec.pocket}.",
+                f"Installed and verified:\n{target}\n\n"
+                f"The pack now contains {len(pack_specs)} custom item(s). "
+                + (
+                    f"{new_spec.display_name} was updated without changing its save-facing identity."
+                    if editing
+                    else f"{new_spec.display_name} is available in Bag > Add Item under {new_spec.pocket}."
+                ),
             )
-            self._assign_next_custom_item_id()
+            if editing:
+                selected_index = next(
+                    index for index, item in enumerate(self.custom_item_specs) if item.item_id == new_spec.item_id
+                )
+                self.mod_installed_combo.current(selected_index)
+            else:
+                self._start_new_custom_item()
+        except ModBuilderError as exc:
+            messagebox.showerror(APP_TITLE, str(exc))
+        finally:
+            self.configure(cursor="")
+
+    def remove_selected_custom_item(self) -> None:
+        selected = self._selected_installed_custom_item()
+        if selected is None:
+            messagebox.showerror(APP_TITLE, "Choose an installed custom item first.")
+            return
+        reference = self._loaded_custom_item_reference(selected)
+        if reference:
+            messagebox.showerror(
+                APP_TITLE,
+                f"Remove {selected.display_name} from {reference} and use Save + Backup before removing it from the pack.",
+            )
+            return
+        installed = installed_items(self.mod_toolchain)
+        try:
+            remaining = remove_item_from_bundle(installed, selected.item_id)
+        except ModBuilderError as exc:
+            messagebox.showerror(APP_TITLE, str(exc))
+            return
+        warning = (
+            "The loaded save has no reference to this item. Other saves are not scanned automatically.\n\n"
+            f"Remove {selected.display_name} from the installed editor pack?"
+        )
+        if not messagebox.askyesno(APP_TITLE, warning):
+            return
+        self.configure(cursor="wait")
+        self.update_idletasks()
+        try:
+            if remaining:
+                build_and_install_item_bundle(
+                    remaining,
+                    self.mod_toolchain,
+                    replace_owned=True,
+                )
+            else:
+                uninstall_item_mod(self.mod_toolchain)
+            removed_edit = self.mod_editing_item_id == selected.item_id
+            self._refresh_mod_builder_status()
+            if removed_edit:
+                self._start_new_custom_item()
+            messagebox.showinfo(
+                APP_TITLE,
+                f"Removed {selected.display_name}. The installed pack now contains {len(remaining)} custom item(s).",
+            )
         except ModBuilderError as exc:
             messagebox.showerror(APP_TITLE, str(exc))
         finally:
             self.configure(cursor="")
 
     def uninstall_current_item_mod(self) -> None:
-        custom = installed_item(self.mod_toolchain)
-        reference = self._loaded_custom_item_reference(custom) if custom else None
-        if reference:
-            messagebox.showerror(
-                APP_TITLE,
-                f"Remove {custom.display_name} from {reference} and use Save + Backup before uninstalling its runtime patch.",
-            )
-            return
+        customs = installed_items(self.mod_toolchain)
+        for custom in customs:
+            reference = self._loaded_custom_item_reference(custom)
+            if reference:
+                messagebox.showerror(
+                    APP_TITLE,
+                    f"Remove {custom.display_name} from {reference} and use Save + Backup before "
+                    "uninstalling the editor pack.",
+                )
+                return
         if not messagebox.askyesno(
-            APP_TITLE, "Uninstall the editor-owned item patch?\n\nThe base game pak is never touched."
+            APP_TITLE,
+            f"Uninstall the editor-owned item pack ({len(customs)} item(s))?\n\n"
+            "The base game pak is never touched.",
         ):
             return
         try:
@@ -2390,20 +2760,23 @@ class SaveEditorApp(tk.Tk):
 
     def _bag_item_names(self, pocket: str) -> tuple[str, ...]:
         names = [choice.name for choice in ITEMS_BY_POCKET[pocket]]
-        custom = getattr(self, "custom_item_spec", None)
-        if custom and custom.pocket == pocket and custom.display_name not in names:
-            names.append(custom.display_name)
+        for custom in getattr(self, "custom_item_specs", ()):
+            if custom.pocket == pocket and custom.display_name not in names:
+                names.append(custom.display_name)
         return tuple(names)
 
     def _custom_bag_items(self, pocket: str) -> tuple[str, ...]:
-        custom = getattr(self, "custom_item_spec", None)
-        return (custom.display_name,) if custom and custom.pocket == pocket else ()
+        return tuple(
+            custom.display_name
+            for custom in getattr(self, "custom_item_specs", ())
+            if custom.pocket == pocket
+        )
 
     def _held_item_names(self) -> tuple[str, ...]:
         names = list(HOLDABLE_ITEM_NAMES)
-        custom = getattr(self, "custom_item_spec", None)
-        if custom and custom.archetype in {"Held Item", "Berry"} and custom.display_name not in names:
-            names.append(custom.display_name)
+        for custom in getattr(self, "custom_item_specs", ()):
+            if custom.archetype in {"Held Item", "Berry"} and custom.display_name not in names:
+                names.append(custom.display_name)
         return tuple(names)
 
     def _build_pokemon(self) -> None:
@@ -3669,6 +4042,7 @@ class SaveEditorApp(tk.Tk):
 def main() -> None:
     app = SaveEditorApp()
     if "--smoke-test" in sys.argv:
+        app.after_cancel(app._initial_open_job)
         app._open_default()
         app.tabs.select(app.pokemon_tab)
         app.pokemon_editor.sections.select(0)
@@ -3728,7 +4102,16 @@ def main() -> None:
             or app.pokemon_editor.vars["MaxHP"].get() != "19"
             or app.pokemon_editor.vars["MetType"].get() != "Gift"
         ):
-            raise RuntimeError("Species selection did not load the complete base profile")
+            actual = {
+                "SpeciesData": app.pokemon_editor.vars["SpeciesData"].get(),
+                "Level": app.pokemon_editor.vars["Level"].get(),
+                "Ability": app.pokemon_editor.vars["Ability"].get(),
+                "Moves": tuple(var.get() for var in app.pokemon_editor.move_vars[:2]),
+                "MaxHP": app.pokemon_editor.vars["MaxHP"].get(),
+                "MetType": app.pokemon_editor.vars["MetType"].get(),
+                "Status": app.pokemon_editor.species_defaults_var.get(),
+            }
+            raise RuntimeError(f"Species selection did not load the complete base profile: {actual}")
         app.pokemon_editor.evolution_canvas.configure(width=500, height=220)
         app.pokemon_editor._draw_evolution_chart()
         if len(app.pokemon_editor.evolution_canvas.find_all()) < 10:
@@ -3775,6 +4158,7 @@ def main() -> None:
             raise RuntimeError("Dark Fighting badge did not choose readable contrasting text")
         if app.sprites.available_directory is not None and app.sprites.get("Torchic", 128) is None:
             raise RuntimeError("Local Pokemon sprite cache is present but Torchic did not load")
+        app.geometry("1080x680")
         app.tabs.select(app.mod_builder_tab)
         app._refresh_mod_builder_status()
         app.update()
@@ -3786,6 +4170,38 @@ def main() -> None:
             raise RuntimeError("Item Mod Builder default wizard values are invalid")
         if "CSTM-000001" not in app.mod_item_id_info_var.get():
             raise RuntimeError("Item Mod Builder did not expose the numeric CSTM Item ID tag")
+        if app.custom_item_specs:
+            app.mod_installed_combo.current(0)
+            installed_item = app.custom_item_specs[0]
+            app.load_selected_custom_item()
+            app.update()
+            loaded_item = app._item_mod_spec_from_form()
+            if (
+                loaded_item.internal_name != installed_item.internal_name
+                or loaded_item.display_name != installed_item.display_name
+                or loaded_item.item_id != installed_item.item_id
+                or loaded_item.template_key != installed_item.template_key
+                or loaded_item.visual_template_key != installed_item.visual_template_key
+                or any(
+                    loaded_item.property_overrides.get(key) != value
+                    for key, value in installed_item.property_overrides.items()
+                )
+            ):
+                raise RuntimeError("Installed custom item did not round-trip from manifest into the edit form")
+            if app.mod_editing_item_id != installed_item.item_id:
+                raise RuntimeError("Installed custom item edit mode did not retain the stable Item ID")
+            if any(str(entry.cget("state")) != "disabled" for entry in app.mod_identity_entries.values()):
+                raise RuntimeError("Custom item identity fields were not locked during edit mode")
+            edited_description = loaded_item.description + " smoke"
+            app.mod_description_var.set(edited_description)
+            preview = replace_item_in_bundle(
+                app.custom_item_specs, installed_item.item_id, app._item_mod_spec_from_form()
+            )
+            if preview[0].description != edited_description:
+                raise RuntimeError("Custom item edit did not replace the selected pack entry")
+            app._start_new_custom_item()
+            if app.mod_editing_item_id is not None:
+                raise RuntimeError("New Item did not leave installed-item edit mode")
         app.mod_archetype_var.set("Vitamin")
         app._on_mod_archetype_changed()
         app.update()
@@ -3799,6 +4215,33 @@ def main() -> None:
         app.update()
         if "doubles the prize money" not in app.mod_behavior_info_var.get():
             raise RuntimeError("Held Item behavior summary did not follow the selected template")
+        app.mod_visual_var.set("Light Ball")
+        app.mod_template_var.set("Leftovers")
+        app._on_mod_behavior_changed()
+        app.mod_attack_multiplier_var.set("2")
+        app.mod_defense_multiplier_var.set("1.5")
+        app.update()
+        held_spec = app._item_mod_spec_from_form()
+        if held_spec.visual_template_key != "DA_LightOrb" or held_spec.template_key != "DA_LeftOvers":
+            raise RuntimeError("Item Mod Builder did not keep Visual and Behavior templates separate")
+        if held_spec.property_overrides.get("DefenseMultiplier") != 1.5:
+            raise RuntimeError("Held Item compatible multi-effect fields were not added to the build spec")
+        if "multiplies Attack by 2×" not in app.mod_behavior_info_var.get():
+            raise RuntimeError("Held Item multi-effect summary did not follow the current modifiers")
+        app._update_mod_scroll_region()
+        bounds = app.mod_scroll_canvas.bbox("all")
+        if not bounds or bounds[3] <= app.mod_scroll_canvas.winfo_height():
+            raise RuntimeError("Small-window Item Mod Builder did not expose overflowing scroll content")
+        app.mod_scroll_canvas.yview_moveto(1)
+        app.update()
+        if app.mod_scroll_canvas.yview()[0] <= 0:
+            raise RuntimeError("Item Mod Builder vertical canvas did not scroll")
+        canvas_top = app.mod_scroll_canvas.winfo_rooty()
+        canvas_bottom = canvas_top + app.mod_scroll_canvas.winfo_height()
+        button_top = app.mod_install_button.winfo_rooty()
+        if not canvas_top <= button_top < canvas_bottom:
+            raise RuntimeError("Scrolling did not bring the Item Mod Builder action buttons into view")
+        app.mod_scroll_canvas.yview_moveto(0)
         app.mod_archetype_var.set("TM")
         app._on_mod_archetype_changed()
         app.update()

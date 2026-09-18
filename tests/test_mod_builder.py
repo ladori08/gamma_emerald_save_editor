@@ -15,11 +15,15 @@ from gamma_editor.mod_builder import (
     ModToolchain,
     VITAMIN_EV_AMOUNTS,
     allocate_custom_item_id,
+    build_and_install_item_bundle,
     build_item_mod,
     custom_item_id_tag,
     discover_toolchain,
     install_item_mod,
     installed_item,
+    installed_items,
+    remove_item_from_bundle,
+    replace_item_in_bundle,
     uninstall_item_mod,
 )
 
@@ -113,6 +117,28 @@ def test_ball_template_builds_ball_pocket_payload_and_validates_enum() -> None:
         ).validated()
 
 
+def test_visual_and_behavior_templates_can_differ_only_inside_one_category() -> None:
+    combined = item_spec(
+        template_key="DA_LeftOvers",
+        visual_template_key="DA_LightOrb",
+        property_overrides={
+            "AttackMultiplier": 2.0,
+            "DefenseMultiplier": 1.5,
+            "SpecialAttackMultiplier": 2.0,
+            "SpecialDefenseMultiplier": 1.25,
+            "SpeedMultiplier": 1.1,
+            "HPRestorePerTurn": 6.25,
+        },
+    ).validated()
+    assert combined.visual_template_key == "DA_LightOrb"
+    assert combined.template_key == "DA_LeftOvers"
+    assert combined.property_overrides["DefenseMultiplier"] == 1.5
+    assert combined.helper_payload()["visual_template_key"] == "DA_LightOrb"
+
+    with pytest.raises(ModBuilderError, match="selected item category"):
+        item_spec(template_key="DA_Potion", visual_template_key="DA_LightOrb").validated()
+
+
 def test_tm_and_vitamin_template_specific_fields() -> None:
     tm = item_spec(
         template_key="DA_TM01",
@@ -177,6 +203,48 @@ def test_player_effect_summary_uses_plain_dynamic_item_wording() -> None:
     assert "teaches it Surf" in player_effect_summary(
         by_key["DA_TM01"], item_name="Surf Disk", values={"TeachableMove": "Surf"}
     )
+    combined = player_effect_summary(
+        by_key["DA_LeftOvers"],
+        item_name="Battle Charm",
+        values={
+            "AttackMultiplier": "2",
+            "DefenseMultiplier": "1.5",
+            "SpecialAttackMultiplier": "1",
+            "SpecialDefenseMultiplier": "1",
+            "SpeedMultiplier": "1",
+            "HPRestorePerTurn": "6.25",
+        },
+    )
+    assert "multiplies Attack by 2×" in combined
+    assert "multiplies Defense by 1.5×" in combined
+    assert "restores 6.25% maximum HP" in combined
+
+
+def test_build_passes_separate_visual_asset_to_helper(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    tools = fake_toolchain(tmp_path)
+    helper_payloads: list[dict[str, object]] = []
+
+    def fake_run(command: list[str], *, cwd: Path) -> None:
+        if "build-item" in command:
+            asset = Path(command[4])
+            asset.write_bytes(b"uasset")
+            asset.with_suffix(".uexp").write_bytes(b"uexp")
+            helper_payloads.append(json.loads(Path(command[-1]).read_text(encoding="utf-8")))
+        else:
+            Path(command[-1]).write_bytes(b"pak-content")
+
+    monkeypatch.setattr(mod_builder, "_run_checked", fake_run)
+    monkeypatch.setattr(mod_builder, "is_game_running", lambda: False)
+    spec = item_spec(
+        internal_name="VisualBehaviorSplit",
+        template_key="DA_LeftOvers",
+        visual_template_key="DA_LightOrb",
+        property_overrides={"AttackMultiplier": 2.0, "HPRestorePerTurn": 6.25},
+    )
+    build_item_mod(spec, tmp_path / "output", tools)
+    assert len(helper_payloads) == 1
+    assert helper_payloads[0]["visual_template_key"] == "DA_LightOrb"
+    assert helper_payloads[0]["visual_source_path"].endswith("DA_LightOrb.uasset")
 
 
 def test_discover_toolchain_from_explicit_roots(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -226,6 +294,145 @@ def test_build_install_and_owned_uninstall_guards(tmp_path: Path, monkeypatch: p
     with pytest.raises(ModBuilderError, match="editor-owned"):
         uninstall_item_mod(tools)
     assert target.read_bytes() == b"foreign"
+
+
+def test_build_and_install_bundle_uses_disposable_staging(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tools = fake_toolchain(tmp_path)
+    staging_outputs: list[Path] = []
+
+    def fake_run(command: list[str], *, cwd: Path) -> None:
+        if "build-item" in command:
+            asset = Path(command[4])
+            asset.write_bytes(b"uasset")
+            asset.with_suffix(".uexp").write_bytes(b"uexp")
+        else:
+            output = Path(command[-1])
+            staging_outputs.append(output)
+            output.write_bytes(b"staged-pack")
+
+    monkeypatch.setattr(mod_builder, "_run_checked", fake_run)
+    monkeypatch.setattr(mod_builder, "is_game_running", lambda: False)
+    stale_export = tmp_path / "exports" / "GammaEditor-TestPotion.pak"
+    stale_export.parent.mkdir()
+    stale_export.write_bytes(b"older-manual-export")
+
+    target = build_and_install_item_bundle((item_spec(),), tools)
+
+    assert target.read_bytes() == b"staged-pack"
+    assert installed_items(tools) == (item_spec().validated(),)
+    assert stale_export.read_bytes() == b"older-manual-export"
+    assert len(staging_outputs) == 1
+    assert not staging_outputs[0].exists()
+
+
+def test_building_on_an_installed_pack_preserves_every_custom_item(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tools = fake_toolchain(tmp_path)
+    built_names: list[str] = []
+
+    def fake_run(command: list[str], *, cwd: Path) -> None:
+        if "build-item" in command:
+            asset = Path(command[4])
+            asset.write_bytes(b"uasset")
+            asset.with_suffix(".uexp").write_bytes(b"uexp")
+            payload = json.loads(Path(command[-1]).read_text(encoding="utf-8"))
+            built_names.append(payload["item_name"])
+        else:
+            Path(command[-1]).write_bytes("|".join(built_names).encode())
+
+    monkeypatch.setattr(mod_builder, "_run_checked", fake_run)
+    monkeypatch.setattr(mod_builder, "is_game_running", lambda: False)
+    first = item_spec(
+        internal_name="CustomLightBall",
+        display_name="Light Ball Pro Max",
+        item_id=CUSTOM_ITEM_ID_BASE + 1,
+        template_key="DA_LightOrb",
+    ).validated()
+    second = item_spec(
+        internal_name="CustomMasterBall",
+        display_name="Super Ball",
+        item_id=CUSTOM_ITEM_ID_BASE + 2,
+        template_key="DA_Shimmerball",
+        property_overrides={"PokeballType": "MasterBall"},
+    ).validated()
+
+    initial = build_item_mod(first, tmp_path / "first", tools)
+    install_item_mod(initial, tools)
+    legacy_manifest = json.loads(tools.installed_manifest.read_text(encoding="utf-8"))  # type: ignore[union-attr]
+    legacy_manifest["format"] = 1
+    legacy_manifest.pop("items")
+    tools.installed_manifest.write_text(json.dumps(legacy_manifest), encoding="utf-8")  # type: ignore[union-attr]
+    assert installed_items(tools) == (first,)
+    rebuilt = build_item_mod(second, tmp_path / "second", tools, bundled_specs=installed_items(tools))
+    install_item_mod(rebuilt, tools, replace_owned=True)
+
+    assert built_names == ["Light Ball Pro Max", "Light Ball Pro Max", "Super Ball"]
+    assert installed_items(tools) == (first, second)
+    assert installed_item(tools) == second
+    manifest = json.loads(tools.installed_manifest.read_text(encoding="utf-8"))  # type: ignore[union-attr]
+    assert manifest["format"] == 2
+    assert [item["display_name"] for item in manifest["items"]] == ["Light Ball Pro Max", "Super Ball"]
+
+
+def test_custom_item_pack_rejects_identity_collisions(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    tools = fake_toolchain(tmp_path)
+    monkeypatch.setattr(mod_builder, "is_game_running", lambda: False)
+    existing = item_spec(item_id=CUSTOM_ITEM_ID_BASE + 1)
+    duplicate = item_spec(internal_name="AnotherName", display_name="Another Item", item_id=CUSTOM_ITEM_ID_BASE + 1)
+    with pytest.raises(ModBuilderError, match="Item ID"):
+        build_item_mod(duplicate, tmp_path / "output", tools, bundled_specs=(existing,))
+
+
+def test_editing_an_item_preserves_identity_category_and_pack_position() -> None:
+    first = item_spec(item_id=CUSTOM_ITEM_ID_BASE + 1).validated()
+    second = item_spec(
+        internal_name="HeldCustom",
+        display_name="Battle Charm",
+        item_id=CUSTOM_ITEM_ID_BASE + 2,
+        template_key="DA_LeftOvers",
+        visual_template_key="DA_LightOrb",
+        property_overrides={"AttackMultiplier": 2.0, "HPRestorePerTurn": 6.25},
+    ).validated()
+    updated = item_spec(
+        internal_name=second.internal_name,
+        display_name=second.display_name,
+        item_id=second.item_id,
+        description="Updated effect.",
+        template_key="DA_AmuletCoin",
+        visual_template_key="DA_SilkScarf",
+        property_overrides={"DefenseMultiplier": 1.5, "HPRestorePerTurn": 3.0},
+    ).validated()
+    result = replace_item_in_bundle((first, second), second.item_id, updated)
+    assert result == (first, updated)
+
+    with pytest.raises(ModBuilderError, match="preserve Item ID"):
+        replace_item_in_bundle((first, second), second.item_id, item_spec(
+            internal_name=second.internal_name,
+            display_name="Renamed Charm",
+            item_id=second.item_id,
+            template_key="DA_LeftOvers",
+        ))
+    with pytest.raises(ModBuilderError, match="preserve the item category"):
+        replace_item_in_bundle((first, second), second.item_id, item_spec(
+            internal_name=second.internal_name,
+            display_name=second.display_name,
+            item_id=second.item_id,
+            template_key="DA_Potion",
+        ))
+
+
+def test_removing_one_item_from_bundle_is_exact_and_can_empty_pack() -> None:
+    first = item_spec(item_id=CUSTOM_ITEM_ID_BASE + 1).validated()
+    second = item_spec(
+        internal_name="SecondItem", display_name="Second Item", item_id=CUSTOM_ITEM_ID_BASE + 2
+    ).validated()
+    assert remove_item_from_bundle((first, second), first.item_id) == (second,)
+    assert remove_item_from_bundle((first,), first.item_id) == ()
+    with pytest.raises(ModBuilderError, match="no longer exists uniquely"):
+        remove_item_from_bundle((first, second), CUSTOM_ITEM_ID_BASE + 99)
 
 
 def test_install_refuses_game_running(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -1,6 +1,6 @@
 # Current State
 
-Last updated: 2026-09-05
+Last updated: 2026-09-10
 
 ## Snapshot
 
@@ -17,7 +17,7 @@ Last updated: 2026-09-05
   hashes, automatic backups, crash contexts and the current game diagnostics tail.
 - Story GVAS recursively parses more than 22,000 tagged records with no parser error, including
   Party, 14 boxes, Daycare, Bag, Seen/Caught and progress fields.
-- The v0.16.1 consumer GUI has five focused tabs: Trainer, Pokémon, Bag, Pokédex and the experimental
+- The v0.19.2 consumer GUI has five focused tabs: Trainer, Pokémon, Bag, Pokédex and the experimental
   Item Mod Builder. Party and Storage share one workspace with six Party cards, a compact 5 × 6 Box
   grid and complete-payload drag/drop.
 - Pokémon cards now use 32 px local runtime icons and the selected record uses a large 96/128 px
@@ -123,14 +123,29 @@ Last updated: 2026-09-05
   unavailable: it would produce an unverified runtime reference with the same class of risk as the
   earlier parser-valid/game-invalid Pokemon records. `docs/ITEM_EXTENSION_GUIDE.md` records the
   safe boundary and the future update/mod workflow.
-- v0.16.1 expands the experimental Item Mod Builder to 41 selected shipped templates across 11
+- v0.19.2 expands the experimental Item Mod Builder to 41 selected shipped templates across 11
   archetypes: HP/status/PP healing, Revive, Vitamin, Rare Candy, evolution/utility, held item, Berry,
-  TM and Poké Ball. The form changes with the selected template and exposes only fields that are
-  actually serialized there, including HP values, multipliers, boosted type/stat, any verified
-  shipped move, Ball enum and catch rate. The chosen template supplies all other cooked behavior,
-  icon, Blueprint, VFX and SFX dependencies. The custom item appears in its correct Bag pocket;
-  held-item/Berry clones also appear in Pokémon Held Item choices. Loaded Bag, Party and every Storage
-  box are checked before replacing/uninstalling a patch so a reference is not knowingly orphaned.
+  TM and Poké Ball. Every category separates the cooked Visual template from the core Behavior
+  template while enforcing same-category compatibility. Visual transfer covers icons and the complete
+  available Ball actor/sprite/flipbook/VFX/SFX reference set. Compatible Held Items can combine one
+  inherited core behavior with Attack, Defense, Sp. Atk, Sp. Def, Speed and end-turn healing values;
+  arbitrary core/cross-category stacks remain unsupported because ItemData has singular ItemType and
+  HeldItemEffect enums. The form exposes only verified fields including HP values, boosted type/stat,
+  any shipped move, Ball enum and catch rate. The custom item appears in its correct Bag pocket;
+  held-item/Berry clones also appear in Pokémon Held Item choices. `Build + Install` now rebuilds one
+  editor-owned pack containing every prior custom item plus the new one, so adding an item does not
+  orphan existing Bag/held references. Uninstall still scans loaded Bag, Party and every Storage box.
+- Installed custom items are now selectable and reload their manifest spec into the wizard. Edit mode
+  locks Item ID, internal asset name, display/Bag name and category, while allowing Visual, Behavior,
+  description, prices and effects to change. `Update + Install` replaces the item at its existing pack
+  position and rebuilds/backups the full pack. Per-item removal rebuilds the remaining pack and is
+  blocked by loaded Bag/Party/Storage references; removing the final item uses guarded uninstall.
+- Install/update and remaining-pack rebuilds now use disposable staging and do not request a user
+  export directory. This prevents older `GammaEditor-*.pak` files in `CustomItemBuild` from blocking
+  an installed-pack update; explicit `Build .pak...` exports keep the no-overwrite safety rule.
+- The builder body now scrolls vertically through a visible scrollbar plus mouse-wheel/trackpad
+  handling. A 1080 × 680 GUI smoke test verifies overflowing Held fields and the action buttons can
+  be reached without enlarging the window; the tab header remains fixed.
 - Item IDs now default to a persistent numeric namespace derived from the `CSTM` FourCC and are shown
   as sequential `CSTM-######` tags. The underlying GE property is a signed `IntProperty`, so literal
   letters are not valid. The wizard retains manual numeric entry and reserves the next sequence to
@@ -277,9 +292,10 @@ proven runtime inventory entries and remain unavailable. Unsupported structures 
 
 ## Next verified milestone
 
-Use v0.16.1 to build/install one disposable item per intended archetype, add it to the correct Bag
-pocket, then verify display and actual use/throw/teach/held effect plus normal in-game save/reload and
-editor reload. For a custom Vitamin above the vanilla cap, install the separate runtime rules with
-the desired scope/caps before launching Gamma, then uninstall them after the test. Remove all Bag and
-held references before replacing/uninstalling an item patch. Keep the verified Mudkip-only backup as
+Use v0.19.2 to build/install disposable items from the intended archetypes into one cumulative pack,
+add them to the correct Bag pocket, then verify display and actual use/throw/teach/held effect plus
+normal in-game save/reload and editor reload. For a custom Vitamin above the vanilla cap, install the
+separate runtime rules with the desired scope/caps before launching Gamma, then uninstall them after
+the test. Remove all Bag and
+held references before uninstalling the item pack. Keep the verified Mudkip-only backup as
 a fallback.

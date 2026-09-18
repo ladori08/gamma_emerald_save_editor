@@ -929,3 +929,106 @@ The real fixture passed container integrity and semantic encode/decode round-tri
   read-only validation of every detected live slot pass. Refreshed the stable root launcher.
   GUI SHA-256: `1B74230A09523A6E73304DB6905198E1E4F7487C59AEB52DE32F272CE54FFC21`.
   CLI SHA-256: `1DC313B191729A02109E6F169A29B46F446EE34DAA7E9EB8CB3AFA6D7D88F0E8`.
+
+## 2026-09-10 - v0.17.0 cumulative custom-item packs
+
+- Replaced the one-installed-item model with one editor-owned pak containing any number of custom
+  items. `Build + Install` reads the installed manifest, rebuilds every prior cooked asset beside the
+  new item, backs up the old pack and atomically installs the combined result. Existing format-1
+  single-item manifests are accepted and upgraded to the format-2 `items` collection.
+- The Bag catalog, held-item selector, generated-ID collision set and installed status now include
+  every item in the pack. Item ID, internal asset name and display/Bag name collisions fail before
+  any native build starts. Adding an item no longer requires deleting retained items from a save;
+  full-pack uninstall still refuses any loaded Bag or Pokémon held-item reference.
+- A real non-installed proof pack rebuilt the existing `Light Ball Pro Max` and the proposed
+  Shimmer-visual `SuperBall`/MasterBall-behavior asset together. `repak list` confirmed both `.uasset`
+  and `.uexp` pairs. No live pak or save was changed by that proof.
+- Shortened owned backup filenames to remain under legacy Windows `MAX_PATH`, which the elevated
+  build's deep pytest base directory caught. Also removed a duplicate initial-save callback from GUI
+  smoke mode.
+- All 72 tests, source and packaged GUI smoke, and packaged CLI validation of all four detected live
+  slots pass. Refreshed the stable root launcher.
+  GUI SHA-256: `657C2448831EA3AAF8519C39D1115F8260EF547EB685288FCC3B2E45A0279EAC`.
+  CLI SHA-256: `F33B4EA66B3BB44C7F9D5B65147663859E6ADEA9741F41EAC1CC2F9BE2DBFFB1`.
+
+## 2026-09-10 - v0.18.0 composable item visuals and compatible held effects
+
+- Split `Visual template` from `Behavior template` for all 41 supported donors across all 11 item
+  categories. Validation requires both donors to share a category. The asset writer copies cooked
+  icon references and, for Balls, the available actor/sprite/flipbook/VFX/SFX reference set while
+  retaining the behavior donor's ItemType, flags and core effect.
+- Added compatible Held Item composition: Attack, Defense, Sp. Atk, Sp. Def and Speed multipliers and
+  end-of-turn HP recovery can be serialized together with one inherited core held behavior. The live
+  `Effects` sentence lists non-neutral modifiers. Arbitrary cross-category/core-effect stacking stays
+  blocked because GE ItemData contains singular ItemType and HeldItemEffect enums.
+- Built a non-installed 11-item proof pack covering every supported category; `repak list` confirms
+  all 22 cooked files. Parsed a focused Leftovers-behavior/Light-Ball-visual proof and verified its
+  HeldItemEffect, copied Light Ball icon and all six numeric modifier fields. No game patch or save
+  was changed. A second seven-item proof then built the full modifier set from every supported Held
+  behavior donor, including donors with no originally serialized float field. All 74 tests, source
+  and packaged GUI smoke, and packaged read-only validation of the
+  currently detected live slot pass. The first package attempt found a running old editor holding its
+  native cryptography module; only that exact editor process was closed before the clean rebuild.
+  Refreshed the stable root launcher.
+  GUI SHA-256: `178BA23E27B55F69A6A3908987516D4612AA5513B32E1E49934374C456993E0B`.
+  CLI SHA-256: `0F57892BD25667AF45E278CA3088144B00FCB89A112DD97CCD3B41165640098F`.
+
+## 2026-09-18 - v0.19.0 installed custom-item edit/remove workflow
+
+- Added an `Installed custom items` selector with `Edit selected` and `Remove selected`. Editing
+  restores the full manifest spec into the composable wizard and locks Item ID, internal asset name,
+  display/Bag name and category, while keeping Visual, Behavior, description, prices and effect fields
+  editable. `New Item` exits edit mode.
+- `Update + Install` replaces exactly the selected item at its existing position, then rebuilds,
+  verifies, backs up and atomically replaces the complete cumulative pack. Model guards reject any
+  attempted identity/category mutation even if the UI lock is bypassed.
+- Per-item removal scans the loaded Bag, Party and all Storage boxes before rebuilding the remaining
+  pack. Removing the final item uses guarded full uninstall, and the confirmation states that other
+  save files cannot be scanned automatically.
+- Non-installed real-toolchain proofs rebuilt the current two-item pack with an edited first item and
+  rebuilt a one-item pack after removing it; the live manifest still contains the original two specs.
+  All 76 tests, source and packaged GUI smoke, and packaged validation of all four hidden live slots
+  pass. The first package attempt found a running old editor holding its native cryptography module;
+  only that exact editor process was closed before the clean rebuild. Refreshed the stable launcher.
+  GUI SHA-256: `E2CA504F5A1CDB121818E5226A4B6927D4472FCD3C4F393814D99712281BD3B5`.
+  CLI SHA-256: `6D0B884BEA75B4F84AE14605CBA8C989B8A8631A514EA54033398453520518F6`.
+
+## 2026-09-18 - v0.19.1 scrollable Item Mod Builder hotfix
+
+- Wrapped the builder body in a width-responsive vertical canvas while keeping the title/help header
+  fixed. Added a visible scrollbar and scoped mouse-wheel/trackpad handling that activates only while
+  the Item Mod Builder tab is selected and the pointer is over its content.
+- New/edit actions reset the viewport to the top. GUI smoke now resizes the app to its 1080 × 680
+  minimum, loads the six-field Held Item form, verifies real overflow, scrolls to the bottom and
+  confirms the install action is inside the visible viewport.
+- All 76 tests and both source/packaged GUI smoke pass. The packaged scroll smoke confirms that at
+  1080 × 680 the content overflows, reaches the action buttons at the bottom, and returns to the top.
+- The first packaging run completed the GUI but hit a transient `pywin32-ctypes` import failure while
+  starting the CLI build. A clean CLI retry succeeded; the runtime key and stable root launcher were
+  restored without printing key material.
+- Packaged `gamma-save.exe validate` passed for all four hidden local `.dat` slots. The live base game
+  pak was not modified and remains SHA-256
+  `2DB705FA9ABCB415C7D73772FF7A8584C021B703D745BDA70D209DD3ABE1CA10`.
+- GUI SHA-256: `9772AD8222453370F730B43D64B60E50C964F5A0A349615A392147D4AA6EAB08`.
+  CLI SHA-256: `F3E4CCC890F793A4FE3763A532FFEB4B34AF85D8B5CEFA1CF4DC8CE54DB3AB7D`.
+
+## 2026-09-18 - v0.19.2 collision-free install/update staging
+
+- Fixed `Update + Install` failing when the chosen export directory already contained the generated
+  bundle filename (for example `GammaEditor-SuperBall.pak`). This was a workflow bug: cumulative
+  packs are named after their final item, while the build-only API correctly refuses overwrites.
+- Added a core build-and-install operation that validates the complete bundle, builds in a fresh
+  disposable staging directory, atomically installs it, then removes staging. `Build + Install`,
+  `Update + Install`, and remaining-pack rebuild after per-item removal now use this operation and no
+  longer show an export-folder dialog. `Build .pak...` still exports to a user-selected folder and
+  retains strict no-overwrite protection.
+- Added regression coverage proving an older manual export stays untouched, the installed bundle is
+  valid, and disposable staging is removed. All 77 source tests pass.
+- Source and packaged GUI smoke passed. The user's running v0.19.1 editor was deliberately left open
+  to preserve unsaved wizard fields, so v0.19.2 was packaged under `dist/v0.19.2`; the stable root
+  launcher now prefers that artifact and falls back to the standard build path.
+- Packaged CLI validation passed for all four hidden local `.dat` slots. The base game pak was not
+  modified and remains SHA-256
+  `2DB705FA9ABCB415C7D73772FF7A8584C021B703D745BDA70D209DD3ABE1CA10`.
+- GUI SHA-256: `47FB57AEC35FD4D1D5F5AFAB2EBCD30EF4D6409C0F720E422B89D51CFC2E1FD6`.
+  CLI SHA-256: `A527D43CAE00E29242600D665AA2822E01A1641AE191A79C8AFEDE476ACE87A3`.
